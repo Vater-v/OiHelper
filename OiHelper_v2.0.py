@@ -15,7 +15,7 @@ from PyQt6.QtCore import QObject, QPropertyAnimation, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QFont, QPalette, QColor, QIcon
 
 # --- ВАЖНО: Настройки для автообновления ---
-CURRENT_VERSION = "v1.9" 
+CURRENT_VERSION = "v2.0" 
 GITHUB_REPO = "Vater-v/OiHelper" 
 ASSET_NAME = "OiHelper.zip" 
 
@@ -27,22 +27,25 @@ PROJECT_CONFIGS = {
         "TABLE": { "FIND_METHOD": "RATIO", "W": 557, "H": 424, "TOLERANCE": 0.05 },
         "LOBBY": { "FIND_METHOD": "RATIO", "W": 333, "H": 623, "TOLERANCE": 0.05, "X": 1600, "Y": 140 },
         "PLAYER": { "W": 700, "H": 365, "X": 1385, "Y": 0 },
-        "TABLE_SLOTS": [(-5, 0), (271, 420), (816, 0), (1086, 425)],
+        "TABLE_SLOTS": [(-5, 0), (271, 420), (816, 0), (1086, 420)],
         "EXCLUDED_TITLES": ["OiHelper", "NekoRay", "NekoBox", "Chrome", "Sandbo", "Notepad", "Explorer"],
+        "EXCLUDED_PROCESSES": ["explorer.exe", "svchost.exe", "cmd.exe", "powershell.exe", "Taskmgr.exe", "chrome.exe", "firefox.exe", "msedge.exe", "RuntimeBroker.exe", "ApplicationFrameHost.exe", "SystemSettings.exe", "NekoRay.exe", "nekobox.exe", "Sandbo.exe"],
         "SESSION_MAX_DURATION_S": 4 * 3600,
         "SESSION_WARN_TIME_S": 3.5 * 3600,
-        "ARRANGE_MINIMIZED_TABLES": False # Для GG расставляем только видимые
+        "ARRANGE_MINIMIZED_TABLES": False 
     },
     "QQ": {
         "TABLE": { "FIND_METHOD": "TITLE_AND_SIZE", "TITLE": "QQPK", "W": 400, "H": 700, "TOLERANCE": 2 },
-        "CV_SERVER": { "TITLE": "OpenCvServer", "X": 1789, "Y": 367, "W": 993, "H": 605 },
+        # ИЗМЕНЕНО: Теперь поиск CV_SERVER будет по частичному совпадению
+        "CV_SERVER": { "FIND_METHOD": "TITLE", "TITLE": "OpenCv", "X": 1789, "Y": 367, "W": 993, "H": 605 },
         "PLAYER": { "X": 1418, "Y": 942, "W": 724, "H": 370 },
         "TABLE_SLOTS": [(0, 0), (405, 0), (810, 0), (1215, 0)],
         "TABLE_SLOTS_5": [(0, 0), (350, 0), (700, 0), (1050, 0), (1400, 0)],
         "EXCLUDED_TITLES": ["OiHelper", "NekoRay", "NekoBox", "Chrome", "Sandbo", "Notepad", "Explorer"],
+        "EXCLUDED_PROCESSES": ["explorer.exe", "svchost.exe", "cmd.exe", "powershell.exe", "Taskmgr.exe", "chrome.exe", "firefox.exe", "msedge.exe", "RuntimeBroker.exe", "ApplicationFrameHost.exe", "SystemSettings.exe", "NekoRay.exe", "nekobox.exe", "Sandbo.exe", "OpenCvServer.exe"],
         "SESSION_MAX_DURATION_S": 3 * 3600,
-        "SESSION_WARN_TIME_S": -1, # -1 означает отсутствие предупреждения
-        "ARRANGE_MINIMIZED_TABLES": True # ИЗМЕНЕНО: Для QQ расставляем и свернутые столы
+        "SESSION_WARN_TIME_S": -1,
+        "ARRANGE_MINIMIZED_TABLES": True
     }
 }
 
@@ -130,9 +133,9 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle(f"OiHelper {CURRENT_VERSION}")
         
-        self.DEFAULT_HEIGHT = 280
-        self.FLASHING_HEIGHT = 340
-        self.setFixedSize(470, self.DEFAULT_HEIGHT)
+        self.DEFAULT_HEIGHT = 260
+        self.FLASHING_HEIGHT = 320
+        self.setFixedSize(440, self.DEFAULT_HEIGHT)
         
         self.setWindowFlags(self.windowFlags() | Qt.WindowType.WindowStaysOnTopHint)
         
@@ -183,25 +186,25 @@ class MainWindow(QMainWindow):
         self.setStyleSheet("QMainWindow { background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #3a3a3a, stop:1 #2a2a2a); }")
         
         main_layout = QVBoxLayout(central_widget)
-        main_layout.setContentsMargins(20, 10, 20, 10); main_layout.setSpacing(6)
+        main_layout.setContentsMargins(15, 10, 15, 10); main_layout.setSpacing(5)
 
         self.project_label = QLabel("Поиск плеера...")
         self.project_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.project_label.setStyleSheet("font-size: 30px; font-weight: bold; color: white; background: transparent;")
+        self.project_label.setStyleSheet("font-size: 28px; font-weight: bold; color: white; background: transparent;")
         main_layout.addWidget(self.project_label)
         
         self.progress_bar = QProgressBar()
         self.progress_bar.setVisible(False)
         self.progress_bar.setTextVisible(False)
         self.progress_bar.setStyleSheet("""
-            QProgressBar { border: 1px solid #555; border-radius: 5px; text-align: center; height: 12px; background-color: #222;}
+            QProgressBar { border: 1px solid #555; border-radius: 5px; text-align: center; height: 10px; background-color: #222;}
             QProgressBar::chunk { background-color: #05B8CC; border-radius: 5px;}
         """)
         main_layout.addWidget(self.progress_bar)
 
         self.progress_bar_label = QLabel("Следующий перезапуск через: 04:00:00")
         self.progress_bar_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.progress_bar_label.setStyleSheet("font-size: 14px; color: #aaa; background: transparent;")
+        self.progress_bar_label.setStyleSheet("font-size: 13px; color: #aaa; background: transparent;")
         self.progress_bar_label.setVisible(False)
         main_layout.addWidget(self.progress_bar_label)
 
@@ -235,7 +238,7 @@ class MainWindow(QMainWindow):
         
         self.button_style_sheet = """
             QPushButton {{ 
-                font-size: 18px; 
+                font-size: 17px; 
                 font-weight: bold; 
                 color: white; 
                 background-color: {color}; 
@@ -251,9 +254,9 @@ class MainWindow(QMainWindow):
         arrange_other_button.setStyleSheet(self.button_style_sheet.format(color="#6c757d", hover_color="#5a6268"))
         self.stop_flash_button.setStyleSheet(self.button_style_sheet.format(color="#ffc107", hover_color="#e0a800"))
 
-        self.auto_record_toggle_button.setMinimumHeight(45)
-        arrange_tables_button.setMinimumHeight(45)
-        arrange_other_button.setMinimumHeight(45)
+        self.auto_record_toggle_button.setMinimumHeight(42)
+        arrange_tables_button.setMinimumHeight(42)
+        arrange_other_button.setMinimumHeight(42)
 
     def update_auto_record_button_style(self):
         if self.is_auto_record_enabled:
@@ -421,14 +424,19 @@ class MainWindow(QMainWindow):
         
         find_method = window_config.get("FIND_METHOD")
         EXCLUDED_TITLES = config.get("EXCLUDED_TITLES", [])
-        # ИЗМЕНЕНО: Проверяем, нужно ли искать свернутые окна для данного проекта/типа
+        EXCLUDED_PROCESSES = config.get("EXCLUDED_PROCESSES", [])
         arrange_minimized = config.get("ARRANGE_MINIMIZED_TABLES", False) and config_key == "TABLE"
         found_windows = []
 
         def enum_windows_callback(hwnd, _):
-            # ИЗМЕНЕНО: Логика проверки свернутых окон стала условной
-            if not win32gui.IsWindowVisible(hwnd) or (not arrange_minimized and win32gui.IsIconic(hwnd)) or hwnd == self.winId(): return True
+            if (not arrange_minimized and win32gui.IsIconic(hwnd)) or hwnd == self.winId(): return True
             try:
+                _, pid = win32process.GetWindowThreadProcessId(hwnd)
+                h_process = win32api.OpenProcess(win32con.PROCESS_QUERY_INFORMATION | win32con.PROCESS_VM_READ, False, pid)
+                process_name = os.path.basename(win32process.GetModuleFileNameEx(h_process, 0))
+                win32api.CloseHandle(h_process)
+                if process_name.lower() in EXCLUDED_PROCESSES: return True
+
                 title = win32gui.GetWindowText(hwnd)
                 if any(excluded.lower() in title.lower() for excluded in EXCLUDED_TITLES): return True
                 
@@ -449,6 +457,9 @@ class MainWindow(QMainWindow):
                        abs(w - window_config["W"]) <= TOLERANCE and \
                        abs(h - window_config["H"]) <= TOLERANCE:
                         match = True
+                elif find_method == "TITLE":
+                    if window_config["TITLE"].lower() in title.lower():
+                        match = True
                 
                 if match:
                     found_windows.append(hwnd)
@@ -465,8 +476,8 @@ class MainWindow(QMainWindow):
         current_tables = self._find_windows_by_config(config, "TABLE")
         current_count = len(current_tables)
 
-        if current_count > self.last_table_count:
-            self.log_request.emit("Обнаружен новый стол. Подготовка к расстановке...", "info")
+        if current_count != self.last_table_count:
+            self.log_request.emit("Изменилось количество столов. Расставляю...", "info")
             QTimer.singleShot(500, self.arrange_tables)
         
         self.last_table_count = current_count
@@ -490,7 +501,6 @@ class MainWindow(QMainWindow):
             if i >= len(SLOTS): break
             x, y = SLOTS[i]
             
-            # ИЗМЕНЕНО: Разворачиваем окно перед перемещением, если оно свернуто
             if win32gui.IsIconic(hwnd):
                 win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
 
@@ -537,7 +547,9 @@ class MainWindow(QMainWindow):
     def position_cv_server_window(self, config):
         cv_config = config.get("CV_SERVER", {});
         if not cv_config: return
-        cv_hwnd = self.find_window_by_title(cv_config["TITLE"], exact_match=True)
+        # ИЗМЕНЕНО: Используем универсальный поиск
+        cv_windows = self._find_windows_by_config(config, "CV_SERVER")
+        cv_hwnd = cv_windows[0] if cv_windows else None
         if cv_hwnd:
             win32gui.MoveWindow(cv_hwnd, cv_config["X"], cv_config["Y"], cv_config["W"], cv_config["H"], True)
             self.log_request.emit("CV Сервер на месте.", "info")
