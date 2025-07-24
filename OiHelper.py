@@ -2,6 +2,7 @@ import sys
 import win32gui
 import win32api
 import win32con
+import win32process # ДОБАВЛЕНО: для работы с процессами
 import re
 import requests
 import threading
@@ -13,7 +14,7 @@ from PyQt6.QtCore import QObject, QPropertyAnimation, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QFont, QPalette, QColor
 
 # --- ВАЖНО: Настройки для автообновления ---
-CURRENT_VERSION = "v1.4" 
+CURRENT_VERSION = "v1.5" 
 GITHUB_REPO = "Vater-v/OiHelper" 
 ASSET_NAME = "OiHelper.zip" 
 
@@ -141,7 +142,7 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
 
-        self.setWindowTitle("OiHelper")
+        self.setWindowTitle(f"OiHelper {CURRENT_VERSION}")
         window_width = 470
         window_height = 330
         self.setFixedSize(window_width, window_height)
@@ -189,12 +190,14 @@ class MainWindow(QMainWindow):
         self.toggle_record_button = QPushButton("Начать запись")
         self.toggle_record_button.clicked.connect(self.toggle_recording)
         
-        button2 = QPushButton("Предупреждение")
-        button3 = QPushButton("Ошибка")
+        arrange_tables_button = QPushButton("Расставить столы")
+        arrange_tables_button.clicked.connect(self.arrange_tables)
+
+        arrange_other_button = QPushButton("Расставить остальное")
+        arrange_other_button.clicked.connect(self.arrange_other_windows)
         
-        buttons = [self.toggle_record_button, button2, button3]
+        buttons = [self.toggle_record_button, arrange_tables_button, arrange_other_button]
         
-        # ИЗМЕНЕНО: Добавлен стиль для неактивной кнопки
         self.button_style_sheet = """
             QPushButton {{
                 font-size: 15px;
@@ -212,8 +215,8 @@ class MainWindow(QMainWindow):
             }}
         """
         self.update_record_button_style()
-        button2.setStyleSheet(self.button_style_sheet.format(color="#F1C40F", hover_color="#F4D03F"))
-        button3.setStyleSheet(self.button_style_sheet.format(color="#E74C3C", hover_color="#EC7063"))
+        arrange_tables_button.setStyleSheet(self.button_style_sheet.format(color="#3498DB", hover_color="#5DADE2"))
+        arrange_other_button.setStyleSheet(self.button_style_sheet.format(color="#9B59B6", hover_color="#AF7AC5"))
 
 
         for button in buttons:
@@ -222,18 +225,13 @@ class MainWindow(QMainWindow):
 
         layout.addStretch()
 
-        button2.clicked.connect(lambda: self.log("Это уведомление-предупреждение.", "warning"))
-        button3.clicked.connect(lambda: self.log("Это уведомление об ошибке.", "error"))
-
-    # ДОБАВЛЕНО: Новая функция для обновления стиля кнопки записи
     def update_record_button_style(self):
-        """Обновляет цвет и текст кнопки записи в зависимости от состояния."""
         if self.is_recording:
             self.toggle_record_button.setText("Закончить запись")
-            self.toggle_record_button.setStyleSheet(self.button_style_sheet.format(color="#E74C3C", hover_color="#EC7063")) # Красный
+            self.toggle_record_button.setStyleSheet(self.button_style_sheet.format(color="#E74C3C", hover_color="#EC7063")) 
         else:
             self.toggle_record_button.setText("Начать запись")
-            self.toggle_record_button.setStyleSheet(self.button_style_sheet.format(color="#27AE60", hover_color="#2ECC71")) # Зеленый
+            self.toggle_record_button.setStyleSheet(self.button_style_sheet.format(color="#27AE60", hover_color="#2ECC71")) 
 
     def press_key(self, key_code):
         try:
@@ -247,28 +245,31 @@ class MainWindow(QMainWindow):
         self.update_record_button_style()
 
         if self.is_recording:
-            self.log_request.emit("Команда: Начать запись (F9)", "info")
+            self.log_request.emit("Начинаю запись...", "info")
             self.press_key(win32con.VK_F9)
             self.recording_status_timer.start(5000) 
             QTimer.singleShot(2000, self.check_recording_status)
         else:
-            self.log_request.emit("Команда: Остановить запись (F10)", "info")
+            self.log_request.emit("Останавливаю запись...", "info")
             self.press_key(win32con.VK_F10)
             self.recording_status_timer.stop()
+        
+        QTimer.singleShot(500, self.position_recorder_window)
 
-    def find_window_by_title(self, text_in_title):
-        found = False
+
+    def find_window_by_title(self, text_in_title, exact_match=False):
+        hwnds = []
         def callback(hwnd, _):
-            nonlocal found
             if win32gui.IsWindowVisible(hwnd):
                 try:
                     title = win32gui.GetWindowText(hwnd)
-                    if text_in_title.lower() in title.lower():
-                        found = True
+                    if (exact_match and text_in_title == title) or \
+                       (not exact_match and text_in_title.lower() in title.lower()):
+                        hwnds.append(hwnd)
                 except Exception:
-                    pass # Игнорировать окна, к которым нет доступа
+                    pass 
         win32gui.EnumWindows(callback, None)
-        return found
+        return hwnds[0] if hwnds else None
 
     def check_recording_status(self):
         if not self.is_recording:
@@ -287,13 +288,135 @@ class MainWindow(QMainWindow):
             self.press_key(win32con.VK_F9)
             return
 
-        # ИСПРАВЛЕНО: Более надежная логика сброса состояния
-        if self.is_recording: # Проверяем, ожидали ли мы запись
+        if self.is_recording: 
             self.log_request.emit("Запись прервана или не началась!", "error")
             self.is_recording = False
             self.update_record_button_style()
             if self.recording_status_timer.isActive():
                 self.recording_status_timer.stop()
+    
+    def arrange_tables(self):
+        # ИЗМЕНЕНО: Упрощенное логирование
+        self.log_request.emit("Ищу столы...", "info")
+
+        TARGET_W, TARGET_H = 557, 424
+        TARGET_ASPECT_RATIO = TARGET_W / TARGET_H
+        TOLERANCE = 0.05
+        MIN_RATIO = TARGET_ASPECT_RATIO * (1 - TOLERANCE)
+        MAX_RATIO = TARGET_ASPECT_RATIO * (1 + TOLERANCE)
+        # ИЗМЕНЕНО: Список исключений
+        EXCLUDED_TITLES = ["OiHelper", "NekoRay", "NekoBox", "Chrome", "Sandbo", "Notepad", "Explorer"]
+
+        SLOTS = [(-5, 0), (276, 420), (826, 0), (1101, 425)]
+        found_windows = []
+
+        def enum_windows_callback(hwnd, _):
+            if not win32gui.IsWindowVisible(hwnd) or win32gui.IsIconic(hwnd) or hwnd == self.winId():
+                return True
+            try:
+                title = win32gui.GetWindowText(hwnd)
+                # ИЗМЕНЕНО: Проверка на исключения
+                if any(excluded.lower() in title.lower() for excluded in EXCLUDED_TITLES):
+                    return True
+
+                rect = win32gui.GetWindowRect(hwnd)
+                w = rect[2] - rect[0]
+                h = rect[3] - rect[1]
+                if w > 0 and h > 0:
+                    current_aspect_ratio = w / h
+                    if MIN_RATIO <= current_aspect_ratio <= MAX_RATIO:
+                        found_windows.append(hwnd)
+            except Exception: pass
+            return True
+
+        win32gui.EnumWindows(enum_windows_callback, None)
+
+        if not found_windows:
+            self.log_request.emit("Столы не найдены.", "warning")
+            return
+
+        arranged_count = 0
+        for i, hwnd in enumerate(found_windows):
+            if i >= len(SLOTS): break
+            x, y = SLOTS[i]
+            win32gui.MoveWindow(hwnd, x, y, TARGET_W, TARGET_H, True)
+            arranged_count += 1
+        
+        self.log_request.emit(f"Расставил столов: {arranged_count}", "info")
+
+    def arrange_other_windows(self):
+        self.log_request.emit("Расставляю остальные окна...", "info")
+        self.position_player_window()
+        self.position_ratio_window()
+        self.position_recorder_window()
+        self.log_request.emit("Расстановка завершена.", "info")
+
+    def position_player_window(self):
+        self.log_request.emit("Ставлю плеер на место...", "info")
+        player_hwnd = self.find_window_by_title("holdem")
+        if player_hwnd:
+            win32gui.MoveWindow(player_hwnd, 1385, 0, 700, 365, True)
+            self.log_request.emit("Плеер на месте.", "info")
+        else:
+            self.log_request.emit("Не нашел плеер.", "error")
+
+    def position_ratio_window(self):
+        self.log_request.emit("Ищу дополнительное окно...", "info")
+        TARGET_W, TARGET_H = 333, 623
+        TARGET_ASPECT_RATIO = TARGET_W / TARGET_H
+        TOLERANCE = 0.05
+        MIN_RATIO = TARGET_ASPECT_RATIO * (1 - TOLERANCE)
+        MAX_RATIO = TARGET_ASPECT_RATIO * (1 + TOLERANCE)
+        EXCLUDED_TITLES = ["OiHelper", "NekoRay", "NekoBox", "Chrome", "Sandbo", "Notepad", "Explorer"]
+        
+        found_hwnd = None
+        
+        def enum_windows_callback(hwnd, _):
+            nonlocal found_hwnd
+            if not win32gui.IsWindowVisible(hwnd) or win32gui.IsIconic(hwnd) or hwnd == self.winId(): return True
+            try:
+                title = win32gui.GetWindowText(hwnd)
+                if any(excluded.lower() in title.lower() for excluded in EXCLUDED_TITLES):
+                    return True
+
+                rect = win32gui.GetWindowRect(hwnd)
+                w, h = rect[2] - rect[0], rect[3] - rect[1]
+                if w > 0 and h > 0:
+                    ratio = w / h
+                    if MIN_RATIO <= ratio <= MAX_RATIO:
+                        found_hwnd = hwnd
+                        return False 
+            except Exception: pass
+            return True
+        
+        win32gui.EnumWindows(enum_windows_callback, None)
+
+        if found_hwnd:
+            win32gui.MoveWindow(found_hwnd, 1640, 140, TARGET_W, TARGET_H, True)
+            self.log_request.emit("Дополнительное окно на месте.", "info")
+        else:
+            self.log_request.emit("Не нашел дополнительное окно.", "error")
+            
+    def position_recorder_window(self):
+        self.log_request.emit("Ставлю рекордер на место...", "info")
+        recorder_hwnd = self.find_window_by_title("recorder")
+        if not recorder_hwnd:
+            self.log_request.emit("Не нашел рекордер.", "error")
+            return
+            
+        try:
+            screen_rect = QApplication.primaryScreen().availableGeometry()
+            rect = win32gui.GetWindowRect(recorder_hwnd)
+            w, h = rect[2] - rect[0], rect[3] - rect[1]
+            
+            x = screen_rect.left() + (screen_rect.width() - w) // 2
+            y = screen_rect.bottom() - h - 20 
+            
+            win32gui.MoveWindow(recorder_hwnd, x, y, w, h, True)
+            self.log_request.emit("Рекордер на месте.", "info")
+        except Exception as e:
+            self.log_request.emit(f"Ошибка позиционирования рекордера: {e}", "error")
+
 
     def init_project_checker(self):
         self.player_check_timer = QTimer(self)
@@ -316,8 +439,7 @@ class MainWindow(QMainWindow):
                         if f"[{full_name}]" in title:
                             project_name = short_name
                             break
-            except Exception:
-                pass
+            except Exception: pass
 
         try:
             win32gui.EnumWindows(find_window_callback, None)
@@ -325,10 +447,8 @@ class MainWindow(QMainWindow):
             print(f"Ошибка при перечислении окон: {e}")
 
         if player_found:
-            if self.player_check_timer.isActive():
-                self.player_check_timer.stop() 
-            if project_name:
-                self.project_label.setText(f"{project_name} - Панель управления")
+            if self.player_check_timer.isActive(): self.player_check_timer.stop() 
+            if project_name: self.project_label.setText(f"{project_name} - Панель управления")
             else:
                 self.project_label.setText("Проект не определен")
                 self.log("Нажмите 'Start' на плеере!", "warning")
@@ -338,11 +458,8 @@ class MainWindow(QMainWindow):
                 self.log("Плеер не запущен! Повторная проверка через 10 сек.", "warning")
                 self.player_check_timer.start(10000)
 
-    # ДОБАВЛЕНО: Отдельная функция для проверки процесса рекордера
     def is_recorder_process_running(self):
-        """Проверяет, запущен ли процесс рекордера."""
         try:
-            # Используем tasklist для проверки процессов
             output = subprocess.check_output(['tasklist'], universal_newlines=True, creationflags=0x08000000)
             return 'recorder' in output.lower()
         except (subprocess.CalledProcessError, FileNotFoundError):
@@ -355,16 +472,13 @@ class MainWindow(QMainWindow):
         self.check_for_recorder() 
 
     def check_for_recorder(self):
-        # ИЗМЕНЕНО: Логика блокировки кнопки
         if self.is_recorder_process_running():
             self.toggle_record_button.setEnabled(True)
-            if self.recorder_check_timer.isActive():
-                self.recorder_check_timer.stop()
+            if self.recorder_check_timer.isActive(): self.recorder_check_timer.stop()
             return
         
         self.toggle_record_button.setEnabled(False)
 
-        # Если мы здесь, значит рекордер не запущен. Пытаемся его найти и запустить.
         desktop_path = os.path.join(os.path.expanduser('~'), 'Desktop')
         shortcut_found = False
         try:
@@ -375,9 +489,7 @@ class MainWindow(QMainWindow):
                     try:
                         os.startfile(shortcut_path)
                         shortcut_found = True
-                        # Даем время процессу запуститься перед следующей проверкой
-                        if self.recorder_check_timer.isActive():
-                           self.recorder_check_timer.stop()
+                        if self.recorder_check_timer.isActive(): self.recorder_check_timer.stop()
                         QTimer.singleShot(3000, self.check_for_recorder)
                         return
                     except Exception as e:
@@ -453,6 +565,7 @@ class MainWindow(QMainWindow):
             updater_script_path = "updater.bat"
             current_exe_path = os.path.realpath(sys.executable if getattr(sys, 'frozen', False) else sys.argv[0])
             current_dir = os.path.dirname(current_exe_path)
+            exe_name = os.path.basename(current_exe_path)
             
             with open(updater_script_path, "w", encoding="cp866") as f:
                 f.write(f"""
@@ -470,7 +583,7 @@ echo Cleaning up...
 del "{current_dir}\\{update_zip_name}"
 
 echo Starting new version...
-start "" "{current_exe_path}"
+start "" "{exe_name}"
 
 (goto) 2>nul & del "%~f0"
                 """)
