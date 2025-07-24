@@ -144,6 +144,7 @@ class MainWindow(QMainWindow):
         
         self.project_label = None; self.player_check_timer = None; self.recorder_check_timer = None
         self.update_info = {}; self.current_project = None
+        self.awaiting_start = False
 
         self.is_auto_record_enabled = True
         self.auto_record_timer = QTimer(self)
@@ -569,45 +570,64 @@ class MainWindow(QMainWindow):
             self.log_request.emit(f"Ошибка позиционирования Camtasia: {e}", "error")
 
     def init_project_checker(self):
-        self.player_check_timer = QTimer(self); self.player_check_timer.timeout.connect(self.check_for_player)
+        self.player_check_timer = QTimer(self)
+        self.player_check_timer.timeout.connect(self.check_for_player)
+        self.player_check_timer.start(2000)
         self.check_for_player()
 
     def check_for_player(self):
-        player_found = False; project_name = None
+        player_found = False
+        project_name = None
         project_map = {"QQPoker": "QQ", "ClubGG": "GG"}
+
         def find_window_callback(hwnd, _):
             nonlocal player_found, project_name
-            if player_found: return
+            if player_found:
+                return
             try:
                 title = win32gui.GetWindowText(hwnd)
                 if "holdem" in title.lower():
                     player_found = True
                     for full_name, short_name in project_map.items():
-                        if f"[{full_name}]" in title: project_name = short_name; break
-            except Exception: pass
-        try: win32gui.EnumWindows(find_window_callback, None)
-        except Exception as e: print(f"Ошибка при перечислении окон: {e}")
+                        if f"[{full_name}]" in title:
+                            project_name = short_name
+                            break
+            except Exception:
+                pass
+
+        try:
+            win32gui.EnumWindows(find_window_callback, None)
+        except Exception as e:
+            print(f"Ошибка при перечислении окон: {e}")
 
         if player_found:
-            if self.player_check_timer.isActive(): self.player_check_timer.stop() 
-            if project_name != self.current_project:
-                self.current_project = project_name 
-                self.last_table_count = 0 
-                if project_name: 
+            if project_name:
+                if self.player_check_timer.isActive():
+                    self.player_check_timer.stop()
+                self.awaiting_start = False
+                if project_name != self.current_project:
+                    self.current_project = project_name
+                    self.last_table_count = 0
                     self.project_label.setText(f"{project_name} - Панель управления")
-                    self.auto_arrange_timer.start(2500) 
-                else:
-                    self.project_label.setText("Проект не определен")
+                    self.auto_arrange_timer.start(2500)
+                    config = PROJECT_CONFIGS.get(self.current_project)
+                    if config:
+                        self.position_player_window(config)
+            else:
+                self.current_project = None
+                self.project_label.setText("Проект не определен")
+                if not self.awaiting_start:
                     self.log("Нажмите 'Start' на плеере!", "warning")
+                    self.awaiting_start = True
         else:
             if self.current_project is not None:
-                self.current_project = None 
+                self.current_project = None
                 self.last_table_count = 0
-                self.auto_arrange_timer.stop() 
-                self.project_label.setText("Плеер не найден")
-                if not self.player_check_timer.isActive():
-                    self.log("Плеер не запущен! Повторная проверка через 10 сек.", "warning")
-                    self.player_check_timer.start(10000)
+                self.auto_arrange_timer.stop()
+            self.project_label.setText("Плеер не найден")
+            self.awaiting_start = False
+            if not self.player_check_timer.isActive():
+                self.player_check_timer.start(2000)
 
     def is_recorder_process_running(self):
         return self.find_window_by_process_name("recorder") is not None
