@@ -589,25 +589,30 @@ class MainWindow(QMainWindow):
         except Exception as e: print(f"Ошибка при перечислении окон: {e}")
 
         if player_found:
-            if self.player_check_timer.isActive(): self.player_check_timer.stop() 
-            if project_name != self.current_project:
-                self.current_project = project_name 
-                self.last_table_count = 0 
-                if project_name: 
+            if project_name:
+                if self.player_check_timer.isActive():
+                    self.player_check_timer.stop()
+                if project_name != self.current_project:
+                    self.current_project = project_name
+                    self.last_table_count = 0
                     self.project_label.setText(f"{project_name} - Панель управления")
-                    self.auto_arrange_timer.start(2500) 
-                else:
-                    self.project_label.setText("Проект не определен")
-                    self.log("Нажмите 'Start' на плеере!", "warning")
+                    self.auto_arrange_timer.start(2500)
+                    self.position_player_window(PROJECT_CONFIGS.get(project_name, {}))
+            else:
+                self.current_project = None
+                self.project_label.setText("Проект не определен")
+                if not self.player_check_timer.isActive():
+                    self.player_check_timer.start(2000)
+                self.log("Нажмите 'Start' на плеере!", "warning")
         else:
             if self.current_project is not None:
-                self.current_project = None 
+                self.current_project = None
                 self.last_table_count = 0
-                self.auto_arrange_timer.stop() 
-                self.project_label.setText("Плеер не найден")
-                if not self.player_check_timer.isActive():
-                    self.log("Плеер не запущен! Повторная проверка через 10 сек.", "warning")
-                    self.player_check_timer.start(10000)
+                self.auto_arrange_timer.stop()
+            self.project_label.setText("Плеер не найден")
+            if not self.player_check_timer.isActive():
+                self.log("Плеер не запущен! Повторная проверка через 2 сек.", "warning")
+                self.player_check_timer.start(2000)
 
     def is_recorder_process_running(self):
         return self.find_window_by_process_name("recorder") is not None
