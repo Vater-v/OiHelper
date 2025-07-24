@@ -10,12 +10,12 @@ import os
 import subprocess
 import zipfile
 import time
-from PyQt6.QtWidgets import QApplication, QMainWindow, QWidget, QVBoxLayout, QPushButton, QLabel, QMessageBox, QProgressBar
+from PyQt6.QtWidgets import QApplication, QMainWindow, QWidget, QVBoxLayout, QPushButton, QLabel, QMessageBox, QProgressBar, QGridLayout
 from PyQt6.QtCore import QObject, QPropertyAnimation, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QFont, QPalette, QColor, QIcon
 
 # --- ВАЖНО: Настройки для автообновления ---
-CURRENT_VERSION = "v1.8" 
+CURRENT_VERSION = "v1.9" 
 GITHUB_REPO = "Vater-v/OiHelper" 
 ASSET_NAME = "OiHelper.zip" 
 
@@ -24,16 +24,25 @@ ASSET_NAME = "OiHelper.zip"
 # ===================================================================
 PROJECT_CONFIGS = {
     "GG": {
-        "TABLE": { "W": 557, "H": 424, "TOLERANCE": 0.05 },
-        "LOBBY": { "W": 333, "H": 623, "TOLERANCE": 0.05, "X": 1600, "Y": 140 },
+        "TABLE": { "FIND_METHOD": "RATIO", "W": 557, "H": 424, "TOLERANCE": 0.05 },
+        "LOBBY": { "FIND_METHOD": "RATIO", "W": 333, "H": 623, "TOLERANCE": 0.05, "X": 1600, "Y": 140 },
         "PLAYER": { "W": 700, "H": 365, "X": 1385, "Y": 0 },
         "TABLE_SLOTS": [(-5, 0), (271, 420), (816, 0), (1086, 425)],
         "EXCLUDED_TITLES": ["OiHelper", "NekoRay", "NekoBox", "Chrome", "Sandbo", "Notepad", "Explorer"],
-        "SESSION_MAX_DURATION_S": 4 * 3600, # 4 часа в секундах
-        "SESSION_WARN_TIME_S": 3.5 * 3600   # 3.5 часа в секундах
+        "SESSION_MAX_DURATION_S": 4 * 3600,
+        "SESSION_WARN_TIME_S": 3.5 * 3600,
+        "ARRANGE_MINIMIZED_TABLES": False # Для GG расставляем только видимые
     },
     "QQ": {
-        # Конфигурация для QQ будет добавлена позже
+        "TABLE": { "FIND_METHOD": "TITLE_AND_SIZE", "TITLE": "QQPK", "W": 400, "H": 700, "TOLERANCE": 2 },
+        "CV_SERVER": { "TITLE": "OpenCvServer", "X": 1789, "Y": 367, "W": 993, "H": 605 },
+        "PLAYER": { "X": 1418, "Y": 942, "W": 724, "H": 370 },
+        "TABLE_SLOTS": [(0, 0), (405, 0), (810, 0), (1215, 0)],
+        "TABLE_SLOTS_5": [(0, 0), (350, 0), (700, 0), (1050, 0), (1400, 0)],
+        "EXCLUDED_TITLES": ["OiHelper", "NekoRay", "NekoBox", "Chrome", "Sandbo", "Notepad", "Explorer"],
+        "SESSION_MAX_DURATION_S": 3 * 3600,
+        "SESSION_WARN_TIME_S": -1, # -1 означает отсутствие предупреждения
+        "ARRANGE_MINIMIZED_TABLES": True # ИЗМЕНЕНО: Для QQ расставляем и свернутые столы
     }
 }
 
@@ -42,14 +51,12 @@ PROJECT_CONFIGS = {
 # Начало кода для уведомлений
 # ===================================================================
 
-# ИЗМЕНЕНО: Добавлены цвета для градиента в уведомлениях
 COLORS = { 
     "info": ("#3498DB", "#2E86C1"), 
     "warning": ("#F39C12", "#D35400"), 
     "error": ("#E74C3C", "#C0392B") 
 }
 
-# --- Класс самого уведомления (окна) ---
 class Notification(QWidget):
     closed = pyqtSignal(QWidget)
     def __init__(self, message, message_type):
@@ -60,18 +67,16 @@ class Notification(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose) 
         layout = QVBoxLayout(self)
         label = QLabel(message)
-        # ИЗМЕНЕНО: Шрифт уведомлений стал крупнее
-        label.setFont(QFont("Arial", 21))
+        label.setFont(QFont("Arial", 22, QFont.Weight.Bold))
         label.setWordWrap(True)
-        
-        # ИЗМЕНЕНО: Используется градиент для улучшения качества графики
+        label.setMinimumWidth(525)
         stop1, stop2 = COLORS.get(message_type, COLORS["info"])
         label.setStyleSheet(f"""
             background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 {stop1}, stop:1 {stop2}); 
             color: white; 
-            padding: 28px; 
+            padding: 30px; 
             border-radius: 12px;
-            border: 1px solid #555;
+            border: 1px solid rgba(255, 255, 255, 0.1);
         """)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(label)
@@ -90,7 +95,6 @@ class Notification(QWidget):
     def closeEvent(self, event):
         self.closed.emit(self); super().closeEvent(event)
 
-# --- Класс-менеджер для управления уведомлениями ---
 class NotificationManager(QObject):
     def __init__(self, parent_window):
         super().__init__()
@@ -125,7 +129,10 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle(f"OiHelper {CURRENT_VERSION}")
-        self.setFixedSize(470, 380) # Высота немного увеличена
+        
+        self.DEFAULT_HEIGHT = 280
+        self.FLASHING_HEIGHT = 340
+        self.setFixedSize(470, self.DEFAULT_HEIGHT)
         
         self.setWindowFlags(self.windowFlags() | Qt.WindowType.WindowStaysOnTopHint)
         
@@ -173,78 +180,88 @@ class MainWindow(QMainWindow):
     def init_ui(self):
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
-        layout = QVBoxLayout(central_widget)
-        layout.setContentsMargins(20, 15, 20, 15); layout.setSpacing(12)
+        self.setStyleSheet("QMainWindow { background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #3a3a3a, stop:1 #2a2a2a); }")
+        
+        main_layout = QVBoxLayout(central_widget)
+        main_layout.setContentsMargins(20, 10, 20, 10); main_layout.setSpacing(6)
 
         self.project_label = QLabel("Поиск плеера...")
         self.project_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        # ИЗМЕНЕНО: Заголовок стал еще крупнее
-        self.project_label.setStyleSheet("font-size: 28px; font-weight: bold; color: white;")
-        layout.addWidget(self.project_label)
+        self.project_label.setStyleSheet("font-size: 30px; font-weight: bold; color: white; background: transparent;")
+        main_layout.addWidget(self.project_label)
         
         self.progress_bar = QProgressBar()
         self.progress_bar.setVisible(False)
         self.progress_bar.setTextVisible(False)
         self.progress_bar.setStyleSheet("""
-            QProgressBar { border: 2px solid #555; border-radius: 5px; text-align: center; height: 12px; }
+            QProgressBar { border: 1px solid #555; border-radius: 5px; text-align: center; height: 12px; background-color: #222;}
             QProgressBar::chunk { background-color: #05B8CC; border-radius: 5px;}
         """)
-        layout.addWidget(self.progress_bar)
+        main_layout.addWidget(self.progress_bar)
 
         self.progress_bar_label = QLabel("Следующий перезапуск через: 04:00:00")
         self.progress_bar_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.progress_bar_label.setStyleSheet("font-size: 14px; color: #aaa;")
+        self.progress_bar_label.setStyleSheet("font-size: 14px; color: #aaa; background: transparent;")
         self.progress_bar_label.setVisible(False)
-        layout.addWidget(self.progress_bar_label)
+        main_layout.addWidget(self.progress_bar_label)
 
         self.stop_flash_button = QPushButton("✋ Остановить мигание")
         self.stop_flash_button.setVisible(False)
         self.stop_flash_button.clicked.connect(self.stop_flashing)
-        layout.addWidget(self.stop_flash_button)
+        main_layout.addWidget(self.stop_flash_button)
         
-        layout.addSpacing(10)
-        layout.addStretch()
+        main_layout.addStretch(1)
 
-        self.auto_record_toggle_button = QPushButton("▶️ Автозапись: ВКЛ")
+        button_grid = QGridLayout()
+        button_grid.setSpacing(10)
+        
+        self.auto_record_toggle_button = QPushButton("▶️ Автозапись")
         self.auto_record_toggle_button.clicked.connect(self.toggle_auto_record)
         
         arrange_tables_button = QPushButton("🃏 Расставить столы")
         arrange_tables_button.clicked.connect(self.arrange_tables)
 
-        arrange_other_button = QPushButton("✨ Расставить остальное")
+        arrange_other_button = QPushButton("✨ Прочее")
         arrange_other_button.clicked.connect(self.arrange_other_windows)
         
-        buttons = [self.auto_record_toggle_button, arrange_tables_button, arrange_other_button]
+        placeholder_button = QPushButton("...")
+        placeholder_button.setVisible(False)
+
+        button_grid.addWidget(self.auto_record_toggle_button, 0, 0, 1, 2)
+        button_grid.addWidget(arrange_tables_button, 1, 0)
+        button_grid.addWidget(arrange_other_button, 1, 1)
         
-        # ИЗМЕНЕНО: Увеличен шрифт кнопок и улучшен дизайн
+        main_layout.addLayout(button_grid)
+        
         self.button_style_sheet = """
             QPushButton {{ 
-                font-size: 17px; 
+                font-size: 18px; 
                 font-weight: bold; 
                 color: white; 
                 background-color: {color}; 
                 border-radius: 8px; 
-                border: 1px solid #222;
+                border: 1px solid rgba(0,0,0,0.2);
+                padding: 5px;
             }}
             QPushButton:hover {{ background-color: {hover_color}; }}
             QPushButton:disabled {{ background-color: #5D6D7E; color: #BDC3C7; border: 1px solid #444;}}
         """
         self.update_auto_record_button_style()
-        arrange_tables_button.setStyleSheet(self.button_style_sheet.format(color="#3498DB", hover_color="#5DADE2"))
-        arrange_other_button.setStyleSheet(self.button_style_sheet.format(color="#9B59B6", hover_color="#AF7AC5"))
-        self.stop_flash_button.setStyleSheet(self.button_style_sheet.format(color="#F39C12", hover_color="#F5B041"))
+        arrange_tables_button.setStyleSheet(self.button_style_sheet.format(color="#007BFF", hover_color="#0056b3"))
+        arrange_other_button.setStyleSheet(self.button_style_sheet.format(color="#6c757d", hover_color="#5a6268"))
+        self.stop_flash_button.setStyleSheet(self.button_style_sheet.format(color="#ffc107", hover_color="#e0a800"))
 
-        for button in buttons:
-            button.setMinimumHeight(50); layout.addWidget(button)
-        layout.addStretch()
+        self.auto_record_toggle_button.setMinimumHeight(45)
+        arrange_tables_button.setMinimumHeight(45)
+        arrange_other_button.setMinimumHeight(45)
 
     def update_auto_record_button_style(self):
         if self.is_auto_record_enabled:
             self.auto_record_toggle_button.setText("▶️ Автозапись: ВКЛ")
-            self.auto_record_toggle_button.setStyleSheet(self.button_style_sheet.format(color="#27AE60", hover_color="#2ECC71")) 
+            self.auto_record_toggle_button.setStyleSheet(self.button_style_sheet.format(color="#28a745", hover_color="#218838")) 
         else:
             self.auto_record_toggle_button.setText("⏹️ Автозапись: ВЫКЛ")
-            self.auto_record_toggle_button.setStyleSheet(self.button_style_sheet.format(color="#E74C3C", hover_color="#EC7063")) 
+            self.auto_record_toggle_button.setStyleSheet(self.button_style_sheet.format(color="#dc3545", hover_color="#c82333")) 
 
     def press_key(self, key_code):
         try:
@@ -274,8 +291,9 @@ class MainWindow(QMainWindow):
         if not config: return
 
         try:
-            tables_exist = len(self._find_windows_by_ratio(config, "TABLE")) > 0
-            lobby_exists = self._find_windows_by_ratio(config, "LOBBY")
+            tables_exist = len(self._find_windows_by_config(config, "TABLE")) > 0
+            lobby_exists = "LOBBY" in config and self._find_windows_by_config(config, "LOBBY")
+            
             is_recording = self.find_window_by_title("Recording...") is not None
             is_paused = self.find_window_by_title("Paused...") is not None
 
@@ -295,14 +313,16 @@ class MainWindow(QMainWindow):
 
     def start_recording_session(self):
         self.press_key(win32con.VK_F9)
-        if self.current_project == "GG":
-            self.recording_start_time = time.time()
-            config = PROJECT_CONFIGS["GG"]
-            self.progress_bar.setMaximum(config["SESSION_MAX_DURATION_S"])
-            self.progress_bar.setValue(0)
-            self.progress_bar.setVisible(True)
-            self.progress_bar_label.setVisible(True)
-            self.session_timer.start(1000)
+        config = PROJECT_CONFIGS.get(self.current_project)
+        if not config: return
+        
+        self.recording_start_time = time.time()
+        self.session_timer.start(1000)
+        
+        self.progress_bar.setMaximum(config["SESSION_MAX_DURATION_S"])
+        self.progress_bar.setValue(0)
+        self.progress_bar.setVisible(True)
+        self.progress_bar_label.setVisible(True)
 
     def stop_recording_session(self):
         self.press_key(win32con.VK_F10)
@@ -330,34 +350,36 @@ class MainWindow(QMainWindow):
         if progress_percent < 0.5: color = "#2ECC71"
         elif progress_percent < 0.85: color = "#F1C40F"
         else: color = "#E74C3C"
-        self.progress_bar.setStyleSheet(f"QProgressBar::chunk {{ background-color: {color}; border-radius: 5px;}} QProgressBar {{ border: 2px solid #555; border-radius: 5px; text-align: center; height: 12px;}}")
+        self.progress_bar.setStyleSheet(f"QProgressBar::chunk {{ background-color: {color}; border-radius: 5px;}} QProgressBar {{ border: 1px solid #555; border-radius: 5px; text-align: center; height: 12px; background-color: #222;}}")
 
-        if elapsed >= config["SESSION_WARN_TIME_S"] and not self.is_flashing:
+        if self.current_project == "GG" and config["SESSION_WARN_TIME_S"] > 0 and elapsed >= config["SESSION_WARN_TIME_S"] and not self.is_flashing:
             self.start_flashing()
         
         if elapsed >= config["SESSION_MAX_DURATION_S"]:
-            self.log_request.emit("4 часа записи истекли. Перезапускаю сессию...", "info")
+            self.log_request.emit(f"{config['SESSION_MAX_DURATION_S']/3600:.0f} часа записи истекли. Перезапуск...", "info")
             self.stop_recording_session()
             QTimer.singleShot(2000, self.check_auto_record_logic)
     
     def start_flashing(self):
         if self.is_flashing: return
+        self.setFixedSize(470, self.FLASHING_HEIGHT)
         self.is_flashing = True
         self.stop_flash_button.setVisible(True)
         self.flash_timer.start(500)
 
     def stop_flashing(self):
         if not self.is_flashing: return
+        self.setFixedSize(470, self.DEFAULT_HEIGHT)
         self.is_flashing = False
         self.stop_flash_button.setVisible(False)
         self.flash_timer.stop()
-        self.setStyleSheet("")
+        self.setStyleSheet("QMainWindow { background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #3a3a3a, stop:1 #2a2a2a); }")
 
     def toggle_window_flash(self):
         if self.flash_state:
-            self.setStyleSheet("QMainWindow { border: 3px solid red; }")
+            self.setStyleSheet("QMainWindow { border: 3px solid red; background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #3a3a3a, stop:1 #2a2a2a); }")
         else:
-            self.setStyleSheet("")
+            self.setStyleSheet("QMainWindow { border: none; background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #3a3a3a, stop:1 #2a2a2a); }")
         self.flash_state = not self.flash_state
 
     def initial_startup_check(self):
@@ -393,22 +415,42 @@ class MainWindow(QMainWindow):
         win32gui.EnumWindows(callback, None)
         return hwnds[0] if hwnds else None
 
-    def _find_windows_by_ratio(self, config, config_key):
+    def _find_windows_by_config(self, config, config_key):
         window_config = config.get(config_key, {});
         if not window_config: return []
-        TARGET_ASPECT_RATIO = window_config["W"] / window_config["H"]
-        TOLERANCE = window_config["TOLERANCE"]
-        MIN_RATIO = TARGET_ASPECT_RATIO * (1 - TOLERANCE); MAX_RATIO = TARGET_ASPECT_RATIO * (1 + TOLERANCE)
+        
+        find_method = window_config.get("FIND_METHOD")
         EXCLUDED_TITLES = config.get("EXCLUDED_TITLES", [])
+        # ИЗМЕНЕНО: Проверяем, нужно ли искать свернутые окна для данного проекта/типа
+        arrange_minimized = config.get("ARRANGE_MINIMIZED_TABLES", False) and config_key == "TABLE"
         found_windows = []
+
         def enum_windows_callback(hwnd, _):
-            if not win32gui.IsWindowVisible(hwnd) or win32gui.IsIconic(hwnd) or hwnd == self.winId(): return True
+            # ИЗМЕНЕНО: Логика проверки свернутых окон стала условной
+            if not win32gui.IsWindowVisible(hwnd) or (not arrange_minimized and win32gui.IsIconic(hwnd)) or hwnd == self.winId(): return True
             try:
                 title = win32gui.GetWindowText(hwnd)
                 if any(excluded.lower() in title.lower() for excluded in EXCLUDED_TITLES): return True
+                
                 rect = win32gui.GetWindowRect(hwnd)
                 w, h = rect[2] - rect[0], rect[3] - rect[1]
-                if w > 0 and h > 0 and MIN_RATIO <= (w / h) <= MAX_RATIO:
+                if w == 0 or h == 0: return True
+
+                match = False
+                if find_method == "RATIO":
+                    ratio = w / h
+                    TARGET_RATIO = window_config["W"] / window_config["H"]
+                    TOLERANCE = window_config["TOLERANCE"]
+                    if TARGET_RATIO * (1-TOLERANCE) <= ratio <= TARGET_RATIO * (1+TOLERANCE):
+                        match = True
+                elif find_method == "TITLE_AND_SIZE":
+                    TOLERANCE = window_config["TOLERANCE"]
+                    if window_config["TITLE"].lower() in title.lower() and \
+                       abs(w - window_config["W"]) <= TOLERANCE and \
+                       abs(h - window_config["H"]) <= TOLERANCE:
+                        match = True
+                
+                if match:
                     found_windows.append(hwnd)
             except Exception: pass
             return True
@@ -420,36 +462,59 @@ class MainWindow(QMainWindow):
         config = PROJECT_CONFIGS.get(self.current_project)
         if not config: return
         
-        current_tables = self._find_windows_by_ratio(config, "TABLE")
+        current_tables = self._find_windows_by_config(config, "TABLE")
         current_count = len(current_tables)
 
         if current_count > self.last_table_count:
-            self.log_request.emit("Обнаружен новый стол. Расставляю...", "info")
-            self.arrange_tables()
+            self.log_request.emit("Обнаружен новый стол. Подготовка к расстановке...", "info")
+            QTimer.singleShot(500, self.arrange_tables)
         
         self.last_table_count = current_count
 
     def arrange_tables(self):
-        if not self.current_project: self.log_request.emit("Проект не определен. Не могу расставить столы.", "error"); return
+        if not self.current_project: self.log_request.emit("Проект не определен.", "error"); return
         config = PROJECT_CONFIGS.get(self.current_project)
-        if not config or "TABLE" not in config: self.log_request.emit(f"Нет конфигурации столов для проекта {self.current_project}.", "warning"); return
+        if not config or "TABLE" not in config: self.log_request.emit(f"Нет конфига столов для {self.current_project}.", "warning"); return
+        
         self.log_request.emit("Ищу столы...", "info")
-        found_windows = self._find_windows_by_ratio(config, "TABLE")
+        found_windows = self._find_windows_by_config(config, "TABLE")
         if not found_windows: self.log_request.emit("Столы не найдены.", "warning"); return
-        SLOTS = config["TABLE_SLOTS"]; TARGET_W, TARGET_H = config["TABLE"]["W"], config["TABLE"]["H"]
+
+        slots_key = "TABLE_SLOTS"
+        if self.current_project == "QQ" and len(found_windows) >= 5:
+            slots_key = "TABLE_SLOTS_5"
+        
+        SLOTS = config[slots_key]
         arranged_count = 0
         for i, hwnd in enumerate(found_windows):
             if i >= len(SLOTS): break
             x, y = SLOTS[i]
-            win32gui.MoveWindow(hwnd, x, y, TARGET_W, TARGET_H, True); arranged_count += 1
+            
+            # ИЗМЕНЕНО: Разворачиваем окно перед перемещением, если оно свернуто
+            if win32gui.IsIconic(hwnd):
+                win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
+
+            if self.current_project == "GG":
+                win32gui.MoveWindow(hwnd, x, y, config["TABLE"]["W"], config["TABLE"]["H"], True)
+            else: 
+                rect = win32gui.GetWindowRect(hwnd)
+                win32gui.MoveWindow(hwnd, x, y, rect[2]-rect[0], rect[3]-rect[1], True)
+            arranged_count += 1
         self.log_request.emit(f"Расставил {arranged_count} столов.", "info")
 
     def arrange_other_windows(self):
-        if not self.current_project: self.log_request.emit("Проект не определен. Не могу расставить окна.", "error"); return
+        if not self.current_project: self.log_request.emit("Проект не определен.", "error"); return
         config = PROJECT_CONFIGS.get(self.current_project)
-        if not config: self.log_request.emit(f"Нет конфигурации для проекта {self.current_project}.", "warning"); return
+        if not config: self.log_request.emit(f"Нет конфига для {self.current_project}.", "warning"); return
+        
         self.log_request.emit("Расставляю остальные окна...", "info")
-        self.position_player_window(config); self.position_lobby_window(config); self.position_recorder_window()
+        self.position_player_window(config); self.position_recorder_window()
+        
+        if self.current_project == "GG":
+            self.position_lobby_window(config)
+        elif self.current_project == "QQ":
+            self.position_cv_server_window(config)
+        
         self.log_request.emit("Расстановка завершена.", "info")
 
     def position_player_window(self, config):
@@ -462,13 +527,21 @@ class MainWindow(QMainWindow):
         else: self.log_request.emit("Не нашел плеер.", "error")
 
     def position_lobby_window(self, config):
-        lobby_config = config.get("LOBBY", {});
-        if not lobby_config: return
-        lobbies = self._find_windows_by_ratio(config, "LOBBY"); lobby_hwnd = lobbies[0] if lobbies else None
+        lobbies = self._find_windows_by_config(config, "LOBBY"); lobby_hwnd = lobbies[0] if lobbies else None
         if lobby_hwnd:
-            win32gui.MoveWindow(lobby_hwnd, lobby_config["X"], lobby_config["Y"], lobby_config["W"], lobby_config["H"], True)
+            cfg = config["LOBBY"]
+            win32gui.MoveWindow(lobby_hwnd, cfg["X"], cfg["Y"], cfg["W"], cfg["H"], True)
             self.log_request.emit("Лобби на месте.", "info")
         else: self.log_request.emit("Не нашел Лобби.", "error")
+    
+    def position_cv_server_window(self, config):
+        cv_config = config.get("CV_SERVER", {});
+        if not cv_config: return
+        cv_hwnd = self.find_window_by_title(cv_config["TITLE"], exact_match=True)
+        if cv_hwnd:
+            win32gui.MoveWindow(cv_hwnd, cv_config["X"], cv_config["Y"], cv_config["W"], cv_config["H"], True)
+            self.log_request.emit("CV Сервер на месте.", "info")
+        else: self.log_request.emit("Не нашел CV Сервер.", "error")
             
     def position_recorder_window(self):
         recorder_hwnd = self.find_window_by_process_name("recorder");
@@ -477,7 +550,8 @@ class MainWindow(QMainWindow):
             screen_rect = QApplication.primaryScreen().availableGeometry()
             rect = win32gui.GetWindowRect(recorder_hwnd); w, h = rect[2] - rect[0], rect[3] - rect[1]
             x = screen_rect.left() + (screen_rect.width() - w) // 2
-            y = screen_rect.bottom() - h - 20 
+            y_offset = 20 if self.current_project == "GG" else 40
+            y = screen_rect.bottom() - h - y_offset
             win32gui.MoveWindow(recorder_hwnd, x, y, w, h, True)
         except Exception as e:
             self.log_request.emit(f"Ошибка позиционирования Camtasia: {e}", "error")
