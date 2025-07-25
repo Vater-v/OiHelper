@@ -82,8 +82,8 @@ class AppConfig:
     ASSET_NAME = "OiHelper.zip"
     ICON_PATH = 'icon.ico'
     
-    TELEGRAM_BOT_TOKEN = os.environ.get("OIHELPER_TG_TOKEN", '8087291675:AAHC-s2MKTCqmd4J-sW3iwgqvzj3YhBMhs')
-    TELEGRAM_CHAT_ID = os.environ.get("OIHELPER_TG_CHAT_ID", '747883453')
+    TELEGRAM_BOT_TOKEN = os.environ.get("OIHELPER_TG_TOKEN", '')
+    TELEGRAM_CHAT_ID = os.environ.get("OIHELPER_TG_CHAT_ID", '')
     
     PLAYER_LAUNCHER_TITLE = "Holdem"
     PLAYER_GAME_LAUNCHER_TITLE = "Game"
