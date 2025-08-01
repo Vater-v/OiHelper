@@ -77,7 +77,7 @@ except Exception as e:
 
 class AppConfig:
     """Централизованная конфигурация приложения."""
-    CURRENT_VERSION = "2.99"
+    CURRENT_VERSION = "2.991"
     GITHUB_REPO = "Vater-v/OiHelper"
     ASSET_NAME = "OiHelper.zip"
     ICON_PATH = 'icon.ico'
@@ -518,8 +518,9 @@ class WindowManager(QObject):
 
             # 4. Финальный клик
             self._send_mouse_input(self.MOUSEEVENTF_LEFTDOWN | self.MOUSEEVENTF_ABSOLUTE, x, y)
-            time.sleep(random.uniform(0.04, 0.09))
+            time.sleep(random.uniform(0.15, 0.25))   # увеличить!
             self._send_mouse_input(self.MOUSEEVENTF_LEFTUP | self.MOUSEEVENTF_ABSOLUTE, x, y)
+
             
             logging.info(f"Выполнен 'очеловеченный' клик по ({x},{y})")
 
@@ -844,7 +845,7 @@ class MainWindow(QMainWindow):
         if self.current_project == "GG":
             self.setFixedSize(AppConfig.GG_UI_WIDTH, AppConfig.GG_UI_HEIGHT)
             self.project_label.setText(AppConfig.MSG_PANEL_TITLE.format("GG"))
-            self.position_window_gg_default()
+            self.position_window_default()
         elif self.current_project == "QQ":
             self.setFixedSize(AppConfig.DEFAULT_WIDTH, AppConfig.DEFAULT_HEIGHT)
             self.project_label.setText(AppConfig.MSG_PANEL_TITLE.format("QQ"))
@@ -1250,7 +1251,8 @@ class MainWindow(QMainWindow):
     def focus_window(self, hwnd):
         try:
             if self.shell: self.shell.SendKeys('%')
-            win32gui.SetForegroundWindow(hwnd); time.sleep(0.2)
+            win32gui.SetForegroundWindow(hwnd)
+            time.sleep(0.6)  # БОЛЬШЕ ПАУЗА!
         except Exception as e: logging.error(f"Не удалось сфокусировать окно {hwnd}: {e}")
     
     def perform_special_clicks(self):
