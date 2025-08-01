@@ -16,3 +16,9 @@ venv/
 
 # VSCode
 .vscode/
+
+#bat
+one.bat
+RunReleaseAdmin.bat
+Start.bat
+release.py
