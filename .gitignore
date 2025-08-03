@@ -11,6 +11,7 @@ build/
 *.spec
 
 # Environments
+scripts/
 venv/
 .env
 
@@ -18,6 +19,7 @@ venv/
 .vscode/
 
 #bat
+OiHelper.zip
 one.bat
 RunReleaseAdmin.bat
 Start.bat
