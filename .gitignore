@@ -19,7 +19,6 @@ venv/
 .vscode/
 
 #bat
-.gitignore
 OiHelper.zip
 one.bat
 RunReleaseAdmin.bat
