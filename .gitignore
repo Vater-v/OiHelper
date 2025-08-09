@@ -19,9 +19,10 @@ venv/
 .vscode/
 
 #bat
-.gitignore
 OiHelper.zip
 one.bat
 RunReleaseAdmin.bat
 Start.bat
 release.py
+icon.ico
+Start.bat

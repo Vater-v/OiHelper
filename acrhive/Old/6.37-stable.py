@@ -11,24 +11,14 @@ import zipfile
 import time
 import logging
 import ctypes
-import shutil
 from ctypes import wintypes, windll
 import queue
 import random
 import math
 from typing import Optional, List, Tuple
 from concurrent.futures import ThreadPoolExecutor
-from PyQt6.QtCore import QMetaObject
-import logging.handlers
-from PyQt6.QtGui import QGuiApplication, QCursor
 
 # Попытка импортировать опциональные библиотеки и установить флаги доступности
-try:
-    import psutil
-    PSUTIL_AVAILABLE = True
-except Exception:
-    PSUTIL_AVAILABLE = False
-
 try:
     import pyautogui
     PYAUTOGUI_AVAILABLE = True
@@ -55,54 +45,27 @@ except ImportError:
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QPushButton, QLabel,
     QGridLayout, QHBoxLayout, QFrame, QSizePolicy, QGraphicsDropShadowEffect,
-    QComboBox, QProgressBar, QMessageBox
+    QComboBox, QProgressBar
 )
-from PyQt6.QtCore import QObject, QTimer, pyqtSignal, Qt, QPropertyAnimation, QRect, QEasingCurve, pyqtProperty, QThread
+from PyQt6.QtCore import QObject, QTimer, pyqtSignal, Qt, QPropertyAnimation, QRect, QEasingCurve, pyqtProperty
 from PyQt6.QtGui import QIcon, QColor, QFont, QPainter, QBrush, QPen
 from PyQt6.QtSvg import QSvgRenderer
-
-_user32 = ctypes.windll.user32
-_user32.AttachThreadInput.argtypes = [wintypes.DWORD, wintypes.DWORD, wintypes.BOOL]
-_user32.AttachThreadInput.restype  = wintypes.BOOL
-
-# --- WinAPI compat shims ---
-from ctypes import sizeof, c_void_p, c_ulong, c_ulonglong
-
-try:
-    ULONG_PTR = wintypes.ULONG_PTR  # есть не всегда
-except AttributeError:
-    ULONG_PTR = c_ulonglong if sizeof(c_void_p) == 8 else c_ulong
-
-
 
 # ===================================================================
 # 1. КОНФИГУРАЦИЯ И СТИЛИ
 # ===================================================================
 
-try:
-    import win32con
-except ImportError:
-    # Создадим заглушки, если win32con не установлен,
-    # чтобы код оставался синтаксически верным.
-    class Win32ConMock:
-        VK_F9 = 0x78
-        VK_F10 = 0x79
-    win32con = Win32ConMock()
-
 class AppConfig:
-    """Централизованная конфигурация приложения с ускоренными задержками."""
+    """Централизованная конфигурация приложения."""
     # --- Общие настройки приложения ---
     DEBUG_MODE = False
-    CURRENT_VERSION = "7.32"
+    CURRENT_VERSION = "7.10"
     MUTEX_NAME = "OiHelperMutex"
     APP_TITLE_TEMPLATE = "OiHelper v{version}"
     ICON_PATH = 'icon.ico'
-    LOG_DIR_NAME = 'OiHelperLogs'
+    LOG_DIR_NAME = 'OiHelper'
     LOG_FILE_NAME = 'app.log'
     THREAD_POOL_WORKERS = 2
-    PROCESSES_TO_CLOSE: list[str] = ["chrome.exe","clubgg.exe","nekoray.exe","sandman.exe","camrecorder.exe","nekoray_core.exe","qqpoker.exe","holdemdesktop.exe"]
-    PROCESS_CLOSE_GRACE_MS = 5000  # Было: 3000
-    PROCESS_KILL_FORCE = True
 
     # --- Настройки GitHub и обновлений ---
     GITHUB_REPO = "Vater-v/OiHelper"
@@ -110,15 +73,15 @@ class AppConfig:
     UPDATE_ZIP_NAME = "update.zip"
     UPDATE_TEMP_FOLDER = "update_temp"
     UPDATER_SCRIPT_NAME = "updater.bat"
-    UPDATE_CHECK_TIMEOUT_S = 10      # Было: 10
-    UPDATE_DOWNLOAD_TIMEOUT_S = 60  # Было: 60
+    UPDATE_CHECK_TIMEOUT_S = 10
+    UPDATE_DOWNLOAD_TIMEOUT_S = 60
     UPDATE_CHUNK_SIZE = 8192
 
     # --- Настройки Telegram Bot ---
     TELEGRAM_BOT_TOKEN = os.environ.get("OIHELPER_TG_TOKEN", '')
     TELEGRAM_CHAT_ID = os.environ.get("OIHELPER_TG_CHAT_ID", '')
     TELEGRAM_REPORT_LEVEL = 'all'
-    TELEGRAM_API_TIMEOUT_S = 10      # Было: 10
+    TELEGRAM_API_TIMEOUT_S = 10
     TELEGRAM_MAX_MSG_LEN = 4096
     TELEGRAM_TRUNCATE_SUFFIX = "\n[...]"
 
@@ -139,56 +102,56 @@ class AppConfig:
     CAMTASIA_WINDOW_TITLE_PAUSED = "paused..."
 
     # --- Временные интервалы (в миллисекундах, если не указано иное) ---
-    PLAYER_CHECK_INTERVAL = 250                 # Было: 700
-    PLAYER_AUTOSTART_INTERVAL = 200             # Было: 500
-    AUTO_RECORD_INTERVAL = 250                  # Было: 600
-    AUTO_ARRANGE_INTERVAL = 300                 # Было: 800
-    RECORDER_CHECK_INTERVAL = 300               # Было: 800
-    POPUP_CHECK_INTERVAL_FAST = 200             # Было: 750
-    POPUP_CHECK_INTERVAL_SLOW = 3000            # Было: 10000
-    POPUP_FAST_SCAN_DURATION_S = 60             # Было: 120
-    NOTIFICATION_DURATION = 2500                # Было: 4500
-    STATUS_MESSAGE_DURATION = 2000              # Было: 3500
-    LOG_SENDER_TIMEOUT_S = 60                   # Было: 300
-    PLAYER_RELAUNCH_DELAY_S = 2                 # Было: 5
-    RECORD_RESTART_COOLDOWN_S = 2               # Было: 5
-    SESSION_PROGRESS_UPDATE_INTERVAL = 500      # Было: 1000
-    CAMTASIA_ACTION_RETRY_INTERVAL = 150        # Было: 350
-    CAMTASIA_HOTKEY_WAIT_INTERVAL = 150         # Было: 400
-    CAMTASIA_LAUNCH_WAIT_S = 1                  # Было: 2
-    CAMTASIA_LAUNCH_POLL_INTERVAL_MS = 200      # Было: 500
-    CAMTASIA_SYNC_RESTART_DELAY = 150           # Было: 400
-    LOG_WAIT_RETRY_INTERVAL = 1000              # Было: 3000
-    LAUNCHER_WINDOW_ACTIVATION_TIMEOUT = 2000   # Было: 5000
-    OPENCV_LAUNCH_ARRANGE_DELAY = 400           # Было: 1000
-    TABLE_ARRANGE_ON_CHANGE_DELAY = 200         # Было: 500
-    INJECTOR_MINIMIZE_DELAY = 400               # Было: 1000
-    SESSION_LIMIT_HANDLER_DELAY = 50            # Было: 100
-    AUTO_STOP_RECORD_INACTIVITY_S = 300         # Было: 300 (2 минуты)
+    PLAYER_CHECK_INTERVAL = 700
+    PLAYER_AUTOSTART_INTERVAL = 500
+    AUTO_RECORD_INTERVAL = 600
+    AUTO_ARRANGE_INTERVAL = 800
+    RECORDER_CHECK_INTERVAL = 800
+    POPUP_CHECK_INTERVAL_FAST = 750
+    POPUP_CHECK_INTERVAL_SLOW = 10000
+    POPUP_FAST_SCAN_DURATION_S = 120
+    NOTIFICATION_DURATION = 4500
+    STATUS_MESSAGE_DURATION = 3500
+    LOG_SENDER_TIMEOUT_S = 300
+    PLAYER_RELAUNCH_DELAY_S = 10
+    RECORD_RESTART_COOLDOWN_S = 5
+    SESSION_PROGRESS_UPDATE_INTERVAL = 1000
+    CAMTASIA_ACTION_RETRY_INTERVAL = 350
+    CAMTASIA_HOTKEY_WAIT_INTERVAL = 400
+    CAMTASIA_LAUNCH_WAIT_S = 2
+    CAMTASIA_LAUNCH_POLL_INTERVAL_MS = 500
+    CAMTASIA_SYNC_RESTART_DELAY = 400
+    LOG_WAIT_RETRY_INTERVAL = 3000
+    LAUNCHER_WINDOW_ACTIVATION_TIMEOUT = 5000
+    OPENCV_LAUNCH_ARRANGE_DELAY = 1000
+    TABLE_ARRANGE_ON_CHANGE_DELAY = 500
+    INJECTOR_MINIMIZE_DELAY = 1000
+    SESSION_LIMIT_HANDLER_DELAY = 100
+    AUTO_STOP_RECORD_INACTIVITY_S = 300  # 5 минут
 
     # --- Размеры и расположение UI ---
     DEFAULT_WIDTH = 350
     DEFAULT_HEIGHT = 250
-    GG_UI_WIDTH = 850
+    GG_UI_WIDTH = 800
     GG_UI_HEIGHT = 100
-    WINDOW_MARGIN = 0
+    WINDOW_MARGIN = 1
     CLICK_INDICATOR_SIZE = 45
-    CLICK_INDICATOR_DURATION = 350              # Было: 250
+    CLICK_INDICATOR_DURATION = 250
     SPLASH_WIDTH = 300
     SPLASH_HEIGHT = 100
     SPLASH_PROGRESS_HEIGHT = 10
     NOTIFICATION_WIDTH = 420
     NOTIFICATION_MAX_COUNT = 5
-    NOTIFICATION_FADE_INTERVAL = 10             # Было: 20
+    NOTIFICATION_FADE_INTERVAL = 20
     PROGRESS_BAR_HEIGHT = 6
-    PROGRESS_BAR_ANIMATION_DURATION = 500       # Было: 1000
-    PROGRESS_BAR_ALERT_BLINK_INTERVAL = 400     # Было: 400
+    PROGRESS_BAR_ANIMATION_DURATION = 1000
+    PROGRESS_BAR_ALERT_BLINK_INTERVAL = 400
     TOGGLE_SWITCH_WIDTH = 40
     TOGGLE_SWITCH_HEIGHT = 22
-    TOGGLE_ANIMATION_DURATION = 200             # Было: 200
+    TOGGLE_ANIMATION_DURATION = 200
     RECORDER_FIXED_WIDTH = 410
     RECORDER_FIXED_HEIGHT = 105
-    RECORDER_BOTTOM_MARGIN = 0
+    RECORDER_BOTTOM_MARGIN = 30
     QQ_DYNAMIC_ARRANGE_THRESHOLD = 4
     QQ_DYNAMIC_TABLES_PER_ROW = 5
     QQ_DYNAMIC_SCALE_FACTOR = 0.6
@@ -214,13 +177,11 @@ class AppConfig:
     MSG_LIMIT_REACHED = "<b>Лимит!</b>"
     MSG_UPDATE_FAIL = "Ошибка обновления. Работа в оффлайн-режиме."
     MSG_UPTIME_WARNING = "Компьютер не перезагружался более 5 дней."
-    UPTIME_NAG_CHECK_INTERVAL_MS = 60 * 1000    # Было: 5 * 60 * 1000 (проверка каждую минуту)
-    UPTIME_NAG_SNOOZE_MIN = 60                  # Было: 240 (напомнить через час)
-    UPTIME_NAG_BLINK_INTERVAL_MS = 300          # Было: 450
     MSG_ADMIN_WARNING = "Нет прав администратора. Функции могут быть ограничены."
     MSG_ARRANGE_TABLES_NOT_FOUND = "Столы для расстановки не найдены."
     MSG_PROJECT_UNDEFINED = "Проект не определен. Расстановка невозможна."
     MSG_CAMTASIA_AUTOMATION = "Автоматизация Camtasia...\nНе трогайте мышь и клавиатуру"
+    MSG_BLOCKING_OVERLAY_DEFAULT = "Пожалуйста, не трогайте мышь и клавиатуру..."
     MSG_AUTO_RECORD_ON = "Автозапись включена."
     MSG_AUTO_RECORD_OFF = "Автозапись выключена."
     MSG_AUTOMATION_ON = "Автоматика включена."
@@ -237,27 +198,27 @@ class AppConfig:
     MOUSEEVENTF_LEFTUP = 0x0004
     MOUSEEVENTF_MOVE = 0x0001
     MOUSEEVENTF_ABSOLUTE = 0x8000
-    MOUSEEVENTF_VIRTUALDESK = 0x4000
     VK_F9 = win32con.VK_F9
     VK_F10 = win32con.VK_F10
     UPTIME_WARN_DAYS = 5
 
     # --- Параметры автоматизации и кликов ---
-    ROBUST_CLICK_DELAY = 0.05                 # Было: 0.13
-    ROBUST_CLICK_ACTIVATION_DELAY = 0.03      # Было: 0.07
-    ROBUST_CLICK_SET_CURSOR_DELAY = 0.03      # Было: 0.07
-    ROBUST_CLICK_MOUSE_DOWN_DELAY = 0.01      # Было: 0.02
-    SENDINPUT_MOVE_DELAY = 0.01               # Было: 0.03
-    SENDINPUT_CLICK_INTERVAL_MIN = 0.02       # Было: 0.05
-    SENDINPUT_CLICK_INTERVAL_MAX = 0.05       # Было: 0.1
-    KEY_PRESS_DELAY = 0.01                    # Было: 0.03
-    KEY_PRESS_WAIT_AFTER = 0.05               # Было: 0.15
+    ROBUST_CLICK_DELAY = 0.13
+    ROBUST_CLICK_ACTIVATION_DELAY = 0.07
+    ROBUST_CLICK_SET_CURSOR_DELAY = 0.07
+    ROBUST_CLICK_MOUSE_DOWN_DELAY = 0.02
+    DOUBLE_ROBUST_CLICK_INTERVAL = 0.24
+    SENDINPUT_MOVE_DELAY = 0.03
+    SENDINPUT_CLICK_INTERVAL_MIN = 0.05
+    SENDINPUT_CLICK_INTERVAL_MAX = 0.1
+    KEY_PRESS_DELAY = 0.03
+    KEY_PRESS_WAIT_AFTER = 0.15
     CAMTASIA_MAX_ACTION_ATTEMPTS = 6
     CAMTASIA_RESUME_CHECK_ATTEMPTS = 6
-    CAMTASIA_RESUME_CHECK_INTERVAL = 150      # Было: 400
+    CAMTASIA_RESUME_CHECK_INTERVAL = 400
     DEFAULT_CV_CONFIDENCE = 0.73
-    POPUP_ACTION_DELAY = 0.2                  # Было: 0.5
-    BONUS_SPIN_WAIT_S = 1                     # Было: 4
+    POPUP_ACTION_DELAY = 0.5
+    BONUS_SPIN_WAIT_S = 4
 
     # --- Пути к файлам и ключевые слова ---
     LOG_SENDER_KEYWORDS = ["endsess", "logbot"]
@@ -304,6 +265,7 @@ class AppConfig:
     FIND_METHOD_TITLE = "TITLE"
     FIND_METHOD_PROCESS_AND_TITLE = "PROCESS_AND_TITLE"
 
+
     # --- Действия Camtasia ---
     ACTION_START = "start"
     ACTION_STOP = "stop"
@@ -312,18 +274,7 @@ class AppConfig:
     # --- Проекты ---
     PROJECT_MAPPING = {"QQPoker": PROJECT_QQ, "ClubGG": PROJECT_GG, "WUPoker": PROJECT_WU}
 
-AppConfig.DEBUG_MODE = True
-icon_path = os.path.join(os.path.dirname(sys.executable if getattr(sys, 'frozen', False) else __file__), AppConfig.ICON_PATH)
-if not os.path.exists(icon_path):
-    logging.warning(f"ICON NOT FOUND: {icon_path}")
-else:
-    logging.info(f"ICON OK: {icon_path}")
-
-try:
-    ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("OiHelper: v{AppConfig.CURRENT_VERSION}")
-except Exception:
-    pass
-
+logging.getLogger().setLevel(logging.DEBUG if AppConfig.DEBUG_MODE else logging.INFO)
 
 class ColorPalette:
     BACKGROUND = "#F9FAFB"
@@ -342,6 +293,11 @@ class ColorPalette:
     BORDER = "#D1D5DB"
     WHITE = "#FFFFFF"
     BLACK = "#000000"
+    OVERLAY_BG = "rgba(0,0,0,120)"
+    OVERLAY_CLOSE_BTN_BG = "rgba(255,255,255,0.92)"
+    OVERLAY_CLOSE_BTN_HOVER_BG = "#FFEBEB"
+    OVERLAY_CLOSE_BTN_HOVER_COLOR = "#B91C1C"
+    OVERLAY_SHADOW = "rgba(0,0,0,0.14)"
     NOTIFICATION_SHADOW = "rgba(0,0,0,90)"
     BUTTON_SHADOW = "rgba(0,0,0,40)"
 
@@ -405,19 +361,19 @@ PROJECT_CONFIGS = {
             AppConfig.KEY_WIDTH: 333,
             AppConfig.KEY_HEIGHT: 623,
             AppConfig.KEY_TOLERANCE: 0.07,
-            AppConfig.KEY_X: 1588,
-            AppConfig.KEY_Y: 105
+            AppConfig.KEY_X: 1580,
+            AppConfig.KEY_Y: 140
         },
         AppConfig.KEY_PLAYER: {
             AppConfig.KEY_WIDTH: 700,
-            AppConfig.KEY_HEIGHT: 115,
-            AppConfig.KEY_X: 1410,
+            AppConfig.KEY_HEIGHT: 365,
+            AppConfig.KEY_X: 1385,
             AppConfig.KEY_Y: 0
         },
         AppConfig.KEY_TABLE_SLOTS: [(-5, 0), (271, 423), (816, 0), (1086, 423)],
         AppConfig.KEY_EXCLUDED_TITLES: ["OiHelper", "NekoRay", "NekoBox", "Chrome", "Sandbo", "Notepad", "Explorer"],
         AppConfig.KEY_EXCLUDED_PROCESSES: ["explorer.exe", "svchost.exe", "cmd.exe", "powershell.exe", "Taskmgr.exe", "firefox.exe", "msedge.exe", "RuntimeBroker.exe", "ApplicationFrameHost.exe", "SystemSettings.exe", "NekoRay.exe", "nekobox.exe", "Sandbo.exe"],
-        AppConfig.KEY_SESSION_MAX_S: 5 * 3600,
+        AppConfig.KEY_SESSION_MAX_S: 4 * 3600,
         AppConfig.KEY_SESSION_WARN_S: 3.5 * 3600,
         AppConfig.KEY_ARRANGE_MINIMIZED: False,
         AppConfig.KEY_POPUPS: {
@@ -470,10 +426,9 @@ PROJECT_CONFIGS = {
             AppConfig.KEY_ARRANGE_MINIMIZED: True,
             AppConfig.KEY_POPUPS: {
                 # Если нужно - добавь обработку попапов
-            }
+        }
     }
 }
-
 
 # ===================================================================
 # 2. СИСТЕМА ИНТЕРФЕЙСА (SPLASH, УВЕДОМЛЕНИЯ, ИНДИКАТОРЫ)
@@ -527,32 +482,46 @@ class SplashScreen(QWidget):
     def hide_progress(self):
         self.progress_bar.hide()
 
+CAMTASIA_SHORTCUT_KEYWORD = "camtasia"
+SHORTCUT_EXTENSION = ".lnk"
 
-#! НОВОЕ: Универсальная функция для поиска ярлыков
-def find_desktop_shortcut(keyword: str) -> Optional[str]:
-    """Ищет на рабочем столе ярлык, содержащий keyword."""
+
+def try_launch_camtasia_shortcut():
     desktop_path = os.path.join(os.path.expanduser('~'), 'Desktop')
     try:
-        for f in os.listdir(desktop_path):
-            if keyword.lower() in f.lower() and f.lower().endswith(AppConfig.SHORTCUT_EXTENSION):
-                return os.path.join(desktop_path, f)
-    except OSError as e:
-        logging.error(f"Не удалось прочитать рабочий стол при поиске '{keyword}': {e}")
-    return None
-
-#! ИСПРАВЛЕНО: Удален дубликат функции
-def try_launch_camtasia_shortcut():
-    shortcut_path = find_desktop_shortcut(AppConfig.CAMTASIA_SHORTCUT_KEYWORD)
-    if shortcut_path:
-        try:
+        shortcut_path = next(
+            (os.path.join(desktop_path, f) for f in os.listdir(desktop_path)
+             if CAMTASIA_SHORTCUT_KEYWORD in f.lower() and f.lower().endswith(SHORTCUT_EXTENSION)),
+            None)
+        if shortcut_path:
             os.startfile(shortcut_path)
             logging.info("Запущен ярлык Camtasia: %s", shortcut_path)
             return True
-        except Exception as e:
-            logging.error(f"Ошибка при запуске ярлыка Camtasia: {e}")
-    else:
-        logging.warning("Ярлык Camtasia на рабочем столе не найден.")
+        else:
+            logging.warning("Ярлык Camtasia на рабочем столе не найден.")
+    except Exception as e:
+        logging.error(f"Ошибка при запуске ярлыка Camtasia: {e}")
     return False
+
+def find_camtasia_window():
+    result = []
+    def callback(hwnd, _):
+        if not win32gui.IsWindow(hwnd) or not win32gui.IsWindowVisible(hwnd):
+            return
+        try:
+            _, pid = win32process.GetWindowThreadProcessId(hwnd)
+            h_process = win32api.OpenProcess(win32con.PROCESS_QUERY_INFORMATION | win32con.PROCESS_VM_READ, False, pid)
+            process_name = os.path.basename(win32process.GetModuleFileNameEx(h_process, 0))
+            win32api.CloseHandle(h_process)
+            title = win32gui.GetWindowText(hwnd)
+            # Критерий можно усилить/ослабить под свою сборку
+            if "camtasia" in process_name.lower() and (
+                "recorder" in title.lower() or "paused" in title.lower() or "recording" in title.lower()):
+                result.append(hwnd)
+        except Exception:
+            pass
+    win32gui.EnumWindows(callback, None)
+    return result[0] if result else None
 
 def focus_camtasia_window(max_retries=3, wait_launch=2.5, poll_interval=0.5):
     """
@@ -562,9 +531,6 @@ def focus_camtasia_window(max_retries=3, wait_launch=2.5, poll_interval=0.5):
       - разворачивает, активирует, логирует
       - повторяет max_retries раз
     """
-    hwnd = find_camtasia_window()
-    if hwnd:
-        move_camtasia_to_bottom_right(hwnd)
     for attempt in range(max_retries):
         hwnd = find_camtasia_window()
         if hwnd and win32gui.IsWindow(hwnd):
@@ -573,9 +539,8 @@ def focus_camtasia_window(max_retries=3, wait_launch=2.5, poll_interval=0.5):
                 if win32gui.IsIconic(hwnd):
                     win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
                     time.sleep(0.13)
-                if not _force_foreground(hwnd, total_timeout=0.8, log_prefix="[focus_camtasia_window]"):
-                    logging.error("[focus_camtasia_window] Не удалось активировать окно")
-                    return False
+                win32gui.SetForegroundWindow(hwnd)
+                time.sleep(0.09)
                 logging.info(f"[focus_camtasia_window] hwnd={hwnd}, title='{title}' успешно активировано")
                 return True
             except Exception as e:
@@ -592,222 +557,57 @@ def focus_camtasia_window(max_retries=3, wait_launch=2.5, poll_interval=0.5):
     logging.error("Не удалось найти или активировать окно Camtasia после повторных попыток.")
     return False
 
-def _alt_pulse():
-    """Alt-трик: снять foreground-lock через эмуляцию нажатия Alt."""
-    try:
-        win32api.keybd_event(win32con.VK_MENU, 0, 0, 0)  # Alt down
-        time.sleep(0.01)
-        win32api.keybd_event(win32con.VK_MENU, 0, win32con.KEYEVENTF_KEYUP, 0)  # Alt up
-    except Exception:
-        pass
-
-def _wait_foreground(hwnd: int, timeout: float = 0.5) -> bool:
-    """Подождать, пока окно станет foreground, до timeout секунд."""
-    t0 = time.perf_counter()
-    while (time.perf_counter() - t0) < timeout:
-        if win32gui.GetForegroundWindow() == hwnd:
-            return True
-        time.sleep(0.02)
-    return False
-
-def _activate_with_attachthreadinput(hwnd: int, timeout: float = 0.5) -> bool:
-    """
-    Жёсткая активация: временно склеиваем очереди ввода потоков и поднимаем окно.
-    Гарантированно делаем detach.
-    """
-    try:
-        fg = win32gui.GetForegroundWindow()
-    except Exception:
-        fg = 0
-
-    cur_tid = win32api.GetCurrentThreadId()
-    tgt_tid, _ = win32process.GetWindowThreadProcessId(hwnd)
-    fg_tid  = win32process.GetWindowThreadProcessId(fg)[0] if fg else 0
-
-    attached_1 = attached_2 = False
-    try:
-        if tgt_tid:
-            attached_1 = bool(_user32.AttachThreadInput(cur_tid, tgt_tid, True))
-        if fg_tid and fg_tid != tgt_tid:
-            attached_2 = bool(_user32.AttachThreadInput(cur_tid, fg_tid, True))
-
-        # Пакет подъёма
-        try:
-            win32gui.BringWindowToTop(hwnd)
-        except Exception:
-            pass
-        try:
-            win32gui.SetForegroundWindow(hwnd)
-        except Exception:
-            pass
-        try:
-            win32gui.SetActiveWindow(hwnd)
-        except Exception:
-            pass
-        try:
-            win32gui.SetFocus(hwnd)
-        except Exception:
-            pass
-
-    finally:
-        if attached_2:
-            _user32.AttachThreadInput(cur_tid, fg_tid, False)
-        if attached_1:
-            _user32.AttachThreadInput(cur_tid, tgt_tid, False)
-
-    return _wait_foreground(hwnd, timeout)
-
-def _nudge_topmost(hwnd: int, timeout: float = 0.5) -> bool:
-    """Временный TOPMOST → NOTOPMOST как подталкивание, затем foreground."""
-    SWP = win32con.SWP_NOMOVE | win32con.SWP_NOSIZE | win32con.SWP_NOACTIVATE
-    try:
-        win32gui.SetWindowPos(hwnd, win32con.HWND_TOPMOST, 0, 0, 0, 0, SWP)
-        win32gui.SetWindowPos(hwnd, win32con.HWND_NOTOPMOST, 0, 0, 0, 0, SWP)
-        win32gui.BringWindowToTop(hwnd)
-        win32gui.SetForegroundWindow(hwnd)
-    except Exception:
-        pass
-    return _wait_foreground(hwnd, timeout)
-
-def _force_foreground(hwnd: int, total_timeout: float = 1.0, log_prefix: str = "") -> bool:
-    """
-    Комбинированная стратегия: Alt-трик → обычная активация → AttachThreadInput → топмост-толчок → AppActivate.
-    Возвращает True, если окно стало foreground.
-    """
-    # Ранний выход, если уже foreground (учитываем дочерние)
-    try:
-        fg = win32gui.GetForegroundWindow()
-        if fg == hwnd or win32gui.GetAncestor(fg, win32con.GA_ROOT) == hwnd:
-            logging.debug(f"{log_prefix} Окно hwnd={hwnd} уже на переднем плане.")
-            return True
-    except Exception:
-        pass
 
 
-    # 1) Alt-пульс + мягкая попытка
-    _alt_pulse()
-    try:
-        win32gui.BringWindowToTop(hwnd)
-        win32gui.SetForegroundWindow(hwnd)
-    except Exception:
-        pass
-    if _wait_foreground(hwnd, 0.35):
-        logging.debug(f"{log_prefix} Активация успешна после Alt-трика и SetForegroundWindow.")
-        return True
+class BlockingOverlay(QWidget):
+    def __init__(self, message=AppConfig.MSG_BLOCKING_OVERLAY_DEFAULT, parent=None):
+        super().__init__(parent)
+        self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.setWindowModality(Qt.WindowModality.ApplicationModal)
+        screen = QApplication.primaryScreen().geometry()
+        self.setGeometry(screen)
+        self.setStyleSheet(f"background-color: {ColorPalette.OVERLAY_BG};")
 
-    # 2) Жёсткая попытка через AttachThreadInput
-    if _activate_with_attachthreadinput(hwnd, 0.5):
-        logging.debug(f"{log_prefix} Активация успешна через AttachThreadInput.")
-        return True
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
 
-    # 3) Подталкивание TOPMOST/NOTOPMOST
-    if _nudge_topmost(hwnd, 0.5):
-        logging.debug(f"{log_prefix} Активация успешна через nudge_topmost.")
-        return True
+        close_btn = QPushButton("✕", self)
+        close_btn.setFixedSize(56, 56)
+        close_btn.setStyleSheet(
+            f"QPushButton {{"
+            f"  background: {ColorPalette.OVERLAY_CLOSE_BTN_BG};"
+            f"  color: {ColorPalette.RED};"
+            f"  font-size: 38px;"
+            f"  font-weight: bold;"
+            f"  border-radius: 28px;"
+            f"  border: 2px solid {ColorPalette.RED};"
+            f"  box-shadow: 0 6px 20px {ColorPalette.OVERLAY_SHADOW};"
+            f"}}"
+            f"QPushButton:hover {{"
+            f"  background: {ColorPalette.OVERLAY_CLOSE_BTN_HOVER_BG};"
+            f"  color: {ColorPalette.OVERLAY_CLOSE_BTN_HOVER_COLOR};"
+            f"  border-color: {ColorPalette.OVERLAY_CLOSE_BTN_HOVER_COLOR};"
+            f"}}"
+        )
+        close_btn.clicked.connect(self.close)
+        close_btn.move(self.width() - close_btn.width() - 40, (self.height() - close_btn.height()) // 2)
+        close_btn.raise_()
 
-    # 4) Фолбэк на WScript.Shell.AppActivate по PID
-    if WIN32COM_AVAILABLE:
-        try:
-            _, pid = win32process.GetWindowThreadProcessId(hwnd)
-            shell = win32com.client.Dispatch("WScript.Shell")
-            if shell.AppActivate(pid):
-                if _wait_foreground(hwnd, 0.5):
-                    logging.debug(f"{log_prefix} Активация успешна через WScript.Shell.AppActivate.")
-                    return True
-        except Exception:
-            pass
-    
-    logging.warning(f"{log_prefix} Не удалось активировать окно hwnd={hwnd} всеми методами.")
-    return False
+        msg_layout = QVBoxLayout()
+        label = QLabel(message)
+        label.setStyleSheet(f"color: {ColorPalette.WHITE}; font-size: 26px; font-weight: bold;")
+        label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        msg_layout.addStretch()
+        msg_layout.addWidget(label)
+        msg_layout.addStretch()
+        layout.addLayout(msg_layout)
 
-
-class MOUSEINPUT(ctypes.Structure):
-    _fields_ = [
-        ("dx", wintypes.LONG),
-        ("dy", wintypes.LONG),
-        ("mouseData", wintypes.DWORD),
-        ("dwFlags", wintypes.DWORD),
-        ("time", wintypes.DWORD),
-        ("dwExtraInfo", ULONG_PTR),
-    ]
-
-class INPUT(ctypes.Structure):
-    _fields_ = [
-        ("type", wintypes.DWORD),
-        ("mi", MOUSEINPUT)
-    ]
-
-class InjectorMinimizer(QObject):
-    """
-    Класс для многократных попыток свернуть окно инжектора.
-    """
-    finished = pyqtSignal(bool)
-
-    def __init__(self, wm, injector_title, max_attempts=5, delay_ms=500):
-        super().__init__()
-        self.wm = wm
-        self.injector_title = injector_title
-        self.max_attempts = max_attempts
-        self.delay_ms = delay_ms
-        self.attempts = 0
-        self.timer = QTimer(self)
-        self.timer.setSingleShot(True)
-        self.timer.timeout.connect(self._try_minimize)
-
-    def start(self):
-        self.attempts = 0
-        self.timer.start(0)
-
-    def _try_minimize(self):
-        self.attempts += 1
-        logging.info(f"InjectorMinimizer: Попытка {self.attempts}/{self.max_attempts} свернуть '{self.injector_title}'...")
-        
-        injector_hwnd = self.wm.find_first_window_by_title(self.injector_title, exact_match=False)
-        if injector_hwnd and win32gui.IsWindow(injector_hwnd):
-            try:
-                # Дополнительная проверка, что окно не свернуто и не скрыто
-                if not win32gui.IsIconic(injector_hwnd) and win32gui.IsWindowVisible(injector_hwnd):
-                    win32gui.ShowWindow(injector_hwnd, win32con.SW_MINIMIZE)
-                    logging.info(f"InjectorMinimizer: Окно '{self.injector_title}' успешно свернуто.")
-                    self.finished.emit(True)
-                else:
-                    # Окно уже свернуто/не видно, считаем успехом
-                    logging.info(f"InjectorMinimizer: Окно '{self.injector_title}' уже свернуто.")
-                    self.finished.emit(True)
-            except Exception as e:
-                logging.error(f"InjectorMinimizer: Ошибка при сворачивании окна: {e}", exc_info=True)
-                self.finished.emit(False)
-            finally:
-                self.timer.stop()
-        else:
-            if self.attempts < self.max_attempts:
-                self.timer.start(self.delay_ms)
-            else:
-                logging.warning(f"InjectorMinimizer: Не удалось найти или свернуть окно '{self.injector_title}' после {self.max_attempts} попыток.")
-                self.finished.emit(False)
-
-def move_camtasia_to_bottom_right(hwnd: int) -> bool:
-    if not hwnd or not win32gui.IsWindow(hwnd):
-        return False
-
-    screen_width  = win32api.GetSystemMetrics(0)
-    screen_height = win32api.GetSystemMetrics(1)
-
-    left, top, right, bottom = win32gui.GetWindowRect(hwnd)
-    win_width  = right - left
-    win_height = bottom - top
-
-    x = screen_width  - win_width
-    y = screen_height - win_height
-
-    # можно добавить SWP_NOACTIVATE, чтобы не воровать фокус
-    win32gui.SetWindowPos(
-        hwnd, win32con.HWND_TOPMOST,
-        x, y, win_width, win_height,
-        win32con.SWP_SHOWWINDOW  # | win32con.SWP_NOACTIVATE
-    )
-    return True
-
+    def resizeEvent(self, event):
+        btn = self.findChild(QPushButton)
+        if btn:
+            btn.move(self.width() - btn.width() - 40, (self.height() - btn.height()) // 2)
+        super().resizeEvent(event)
 
 class ToggleSwitch(QPushButton):
     def __init__(self, parent=None):
@@ -949,121 +749,6 @@ class NotificationManager(QObject):
             n.move(x, y)
             total_height += height + 10
 
-class UptimeNagDialog(QWidget):
-    """Нельзя закрыть крестиком; мигает; заставляет обратить внимание."""
-    snoozed = pyqtSignal(int)   # минут
-    reboot_now = pyqtSignal()
-
-    def __init__(self, parent, uptime_days: float):
-        super().__init__(parent)
-        # Флаги окна: дочернее, поверх всех, без стандартных кнопок
-        self.setWindowFlags(
-            Qt.WindowType.Dialog
-            | Qt.WindowType.CustomizeWindowHint
-            | Qt.WindowType.WindowTitleHint
-            | Qt.WindowType.WindowStaysOnTopHint
-            | Qt.WindowType.Tool
-        )
-        self.setWindowModality(Qt.WindowModality.ApplicationModal)
-        self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
-
-        self._allow_close = False  # закрывать можно только через наши кнопки
-        self.setWindowTitle("Перезагрузите компьютер")
-
-        # Контент
-        root = QVBoxLayout(self)
-        root.setContentsMargins(16,16,16,16)
-
-        banner = QFrame()
-        banner.setObjectName("banner")
-        banner.setStyleSheet("""
-            QFrame#banner { background: #EF4444; border-radius: 8px; }
-            QLabel#bannerTitle { color: white; font-size: 16px; font-weight: 600; }
-        """)
-        bl = QVBoxLayout(banner)
-        title = QLabel("Компьютер не перезагружался более 5 дней")
-        title.setObjectName("bannerTitle")
-        bl.addWidget(title)
-        root.addWidget(banner)
-
-        info = QLabel(
-            f"Текущий аптайм: ~{uptime_days:.1f} дней.\n"
-            "Перезагрузка освободит ресурсы и уменьшит риск сбоев."
-        )
-        info.setStyleSheet("font-size: 13px; color: #1F2937;")
-        info.setWordWrap(True)
-        root.addWidget(info)
-
-        btns = QHBoxLayout()
-        btn_later = QPushButton("Напомнить позже")
-        btn_now = QPushButton("Перезагрузить сейчас")
-        btn_later.setStyleSheet(StyleSheet.get_button_style(primary=False))
-        btn_now.setStyleSheet(StyleSheet.get_button_style(primary=True))
-        btns.addWidget(btn_later, 1)
-        btns.addWidget(btn_now, 1)
-        root.addLayout(btns)
-
-        # Мигание баннера
-        self._blink_on = True
-        self._banner = banner
-        self._blink_timer = QTimer(self)
-        self._blink_timer.timeout.connect(self._toggle_blink)
-        self._blink_timer.start(AppConfig.UPTIME_NAG_BLINK_INTERVAL_MS)
-
-        # Сигналы
-        btn_later.clicked.connect(self._on_snooze)
-        btn_now.clicked.connect(self._on_reboot)
-
-        # Компактные размеры и позиционирование по центру родителя
-        self.setFixedWidth(420)
-        self.adjustSize()
-        self._center_on_active_screen()
-
-    def _center_on_active_screen(self):
-        # центр экрана, где сейчас курсор; если не нашли — primary
-        screen = QGuiApplication.screenAt(QCursor.pos()) or QGuiApplication.primaryScreen()
-        if not screen:
-            return
-        sg = screen.availableGeometry()
-        g = self.frameGeometry()
-        g.moveCenter(sg.center())
-        self.move(g.topLeft())
-
-    def _center_over_parent(self):
-        try:
-            parent = self.parentWidget() or self.window()
-            if parent:
-                pg = parent.frameGeometry()
-                g = self.frameGeometry()
-                g.moveCenter(pg.center())
-                self.move(g.topLeft())
-        except Exception:
-            pass
-
-    def _toggle_blink(self):
-        self._blink_on = not self._blink_on
-        color = "#EF4444" if self._blink_on else "#F59E0B"
-        self._banner.setStyleSheet(
-            f"QFrame#banner {{ background: {color}; border-radius: 8px; }}"
-            f"QLabel#bannerTitle {{ color: white; font-size: 16px; font-weight: 600; }}"
-        )
-
-    def _on_snooze(self):
-        self.snoozed.emit(AppConfig.UPTIME_NAG_SNOOZE_MIN)
-        self._allow_close = True
-        self.close()
-
-    def _on_reboot(self):
-        self.reboot_now.emit()
-        # Закрывать не обязательно; перезагрузка прервёт процесс.
-        # Но если что-то пойдёт не так — пусть окно не исчезает.
-
-    def closeEvent(self, event):
-        if self._allow_close:
-            return super().closeEvent(event)
-        event.ignore()  # блокируем X и Alt+F4
-
-
 class AnimatedProgressBar(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -1134,37 +819,12 @@ class AnimatedProgressBar(QWidget):
 class ClickIndicator(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowFlags(
-            Qt.WindowType.FramelessWindowHint |
-            Qt.WindowType.Tool |
-            Qt.WindowType.WindowStaysOnTopHint
-        )
-        # Прозрачность фона и отсутствие активации
-        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
-        self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, True)
-        # Главный фикс: индикатор не перехватывает мышь
-        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
-        # Не принимать фокус
-        self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self.setWindowFlag(Qt.WindowType.WindowDoesNotAcceptFocus, True)
-
+        self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.Tool | Qt.WindowType.WindowStaysOnTopHint)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setFixedSize(AppConfig.CLICK_INDICATOR_SIZE, AppConfig.CLICK_INDICATOR_SIZE)
         self.timer = QTimer(self)
         self.timer.setSingleShot(True)
         self.timer.timeout.connect(self.hide)
-
-        hwnd = int(self.winId())
-        GWL_EXSTYLE = -20
-        WS_EX_TRANSPARENT = 0x20
-        WS_EX_LAYERED = 0x00080000
-        WS_EX_NOACTIVATE = 0x08000000
-        user32 = ctypes.windll.user32
-        GetWindowLongW = user32.GetWindowLongW
-        SetWindowLongW = user32.SetWindowLongW
-        ex = GetWindowLongW(hwnd, GWL_EXSTYLE)
-        SetWindowLongW(hwnd, GWL_EXSTYLE, ex | WS_EX_TRANSPARENT | WS_EX_LAYERED | WS_EX_NOACTIVATE)
-
-
 
     def paintEvent(self, event):
         painter = QPainter(self)
@@ -1178,175 +838,51 @@ class ClickIndicator(QWidget):
         self.show()
         self.timer.start(AppConfig.CLICK_INDICATOR_DURATION)
 
-
 class WindowManager(QObject):
     log_request = pyqtSignal(str, str)
     click_visual_request = pyqtSignal(int, int)
 
     def __init__(self):
         super().__init__()
+        class MOUSEINPUT(ctypes.Structure):
+            _fields_ = [("dx", wintypes.LONG), ("dy", wintypes.LONG), ("mouseData", wintypes.DWORD),
+                        ("dwFlags", wintypes.DWORD), ("time", wintypes.DWORD), ("dwExtraInfo", ctypes.POINTER(wintypes.ULONG))]
+        class INPUT(ctypes.Structure):
+            _fields_ = [("type", wintypes.DWORD), ("mi", MOUSEINPUT)]
         self.INPUT_STRUCT = INPUT
-
-        # Primary — оставим, иногда полезно
-        self.screen_width  = win32api.GetSystemMetrics(win32con.SM_CXSCREEN)
+        self.screen_width = win32api.GetSystemMetrics(win32con.SM_CXSCREEN)
         self.screen_height = win32api.GetSystemMetrics(win32con.SM_CYSCREEN)
 
-        # Виртуальный рабочий стол — корректно для мульти-мониторных конфигураций
-        self.vx = win32api.GetSystemMetrics(win32con.SM_XVIRTUALSCREEN)
-        self.vy = win32api.GetSystemMetrics(win32con.SM_YVIRTUALSCREEN)
-        self.vw = win32api.GetSystemMetrics(win32con.SM_CXVIRTUALSCREEN)
-        self.vh = win32api.GetSystemMetrics(win32con.SM_CYVIRTUALSCREEN)
-
-    # =============================
-    # Низкоуровневые ввод/координаты
-    # =============================
-    # WindowManager._abs_from_pixels
-    def _abs_from_pixels(self, x: int, y: int) -> Tuple[int, int]:
-        vw = max(1, self.vw)
-        vh = max(1, self.vh)
-        nx = int(round(((x - self.vx) * 65535) / (vw - 1))) if vw > 1 else 0
-        ny = int(round(((y - self.vy) * 65535) / (vh - 1))) if vh > 1 else 0
-        return max(0, min(65535, nx)), max(0, min(65535, ny))
-
-
-    # WindowManager._send_mouse_input
     def _send_mouse_input(self, flags, x=0, y=0):
         if flags & AppConfig.MOUSEEVENTF_ABSOLUTE:
-            x, y = self._abs_from_pixels(x, y)
-            flags |= AppConfig.MOUSEEVENTF_VIRTUALDESK
-        mi = MOUSEINPUT(dx=x, dy=y, mouseData=0, dwFlags=flags, time=0, dwExtraInfo=0)
+            x = (x * 65535) // self.screen_width
+            y = (y * 65535) // self.screen_height
+        mi = self.INPUT_STRUCT._fields_[1][1](dx=x, dy=y, mouseData=0, dwFlags=flags, time=0, dwExtraInfo=None)
         mouse_input = self.INPUT_STRUCT(type=AppConfig.INPUT_MOUSE, mi=mi)
         ctypes.windll.user32.SendInput(1, ctypes.byref(mouse_input), ctypes.sizeof(mouse_input))
 
-    # =============================
-    # Вспомогательные действия
-    # =============================
-    def press_key(self, key_code: int):
-        try:
-            win32api.keybd_event(key_code, 0, 0, 0)
-            time.sleep(AppConfig.KEY_PRESS_DELAY)
-            win32api.keybd_event(key_code, 0, win32con.KEYEVENTF_KEYUP, 0)
-        except Exception as e:
-            logging.error("Ошибка эмуляции нажатия клавиши", exc_info=True)
-            self.log_request.emit(f"Ошибка эмуляции нажатия: {e}", "error")
+    def double_robust_click(self, x: int, y: int, hwnd: int = None, delay: float = AppConfig.ROBUST_CLICK_DELAY, interval: float = AppConfig.DOUBLE_ROBUST_CLICK_INTERVAL, log_prefix: str = "") -> bool:
+        first = self.robust_click(x, y, hwnd=hwnd, delay=delay, log_prefix=log_prefix)
+        time.sleep(interval)
+        second = self.robust_click(x, y, hwnd=hwnd, delay=delay, log_prefix=log_prefix)
+        return first and second
 
-    # =============================
-    # Поиск окон
-    # =============================
-    #! ИСПРАВЛЕНО: Добавлен try...finally для гарантированного закрытия хендла
-    def find_first_window_by_process_name(self, process_name_to_find: str, check_visible: bool = True) -> Optional[int]:
-        hwnds = []
-        def callback(hwnd, _):
-            if not (win32gui.IsWindow(hwnd) and win32gui.IsWindowEnabled(hwnd)):
-                return True
-            if check_visible and (not win32gui.IsWindowVisible(hwnd) or win32gui.IsIconic(hwnd)):
-                return True
-            
-            h_process = None
-            try:
-                _, pid = win32process.GetWindowThreadProcessId(hwnd)
-                h_process = win32api.OpenProcess(win32con.PROCESS_QUERY_INFORMATION | win32con.PROCESS_VM_READ, False, pid)
-                process_name = os.path.basename(win32process.GetModuleFileNameEx(h_process, 0))
-                if process_name_to_find.lower() in process_name.lower():
-                    hwnds.append(hwnd)
-            except win32api.error:
-                # Игнорируем ошибки доступа, это нормально для системных процессов
-                pass
-            except Exception as e:
-                logging.debug(f"Ошибка в callback find_first_window_by_process_name для hwnd={hwnd}: {e}")
-            finally:
-                if h_process:
-                    win32api.CloseHandle(h_process)
-            return True
-        try:
-            win32gui.EnumWindows(callback, None)
-        except Exception as e:
-            logging.error("Критическая ошибка в EnumWindows (поиск по процессу)", exc_info=True)
-        return hwnds[0] if hwnds else None
-
-    # =============================
-    # Клики
-    # =============================
-    def robust_click(
-            self,
-            x: int,
-            y: int,
-            hwnd: int = None,
-            delay: float = AppConfig.ROBUST_CLICK_DELAY,
-            log_prefix: str = "",
-            restore_cursor: bool = False
-        ) -> bool:
-        old_pos = None
-        try:
-            if hwnd:
-                if not win32gui.IsWindow(hwnd):
-                    logging.error(f"{log_prefix} robust_click: Окно hwnd={hwnd} больше не существует.")
-                    return False
-                if win32gui.IsIconic(hwnd):
-                    win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
-                    time.sleep(0.12)
-                if not _force_foreground(hwnd, total_timeout=1.2, log_prefix=log_prefix):
-                    logging.error(f"{log_prefix} robust_click: не удалось активировать окно (hwnd={hwnd})")
-                    return False
-                time.sleep(delay)
-            if restore_cursor:
-                old_pos = win32api.GetCursorPos()
-
-            # Кламп до виртуального экрана
-            tx = min(max(x, self.vx), self.vx + self.vw - 1)
-            ty = min(max(y, self.vy), self.vy + self.vh - 1)
-
-            # Перемещаем курсор
-            self._send_mouse_input(AppConfig.MOUSEEVENTF_MOVE | AppConfig.MOUSEEVENTF_ABSOLUTE, tx, ty)
-            time.sleep(AppConfig.SENDINPUT_MOVE_DELAY)
-
-            # Если целевое окно задано — верифицируем, что под точкой именно оно
-            if hwnd:
-                try:
-                    pt_hwnd = win32gui.WindowFromPoint((tx, ty))
-                    top = win32gui.GetAncestor(pt_hwnd, win32con.GA_ROOT)
-                except Exception:
-                    top = None
-
-                if top != hwnd:
-                    # Повторная попытка «подтолкнуть» окно и верифицировать ещё раз
-                    _force_foreground(hwnd, total_timeout=0.6, log_prefix=log_prefix)
-                    time.sleep(0.03)
-                    try:
-                        pt_hwnd = win32gui.WindowFromPoint((tx, ty))
-                        top = win32gui.GetAncestor(pt_hwnd, win32con.GA_ROOT)
-                    except Exception:
-                        top = None
-
-                    if top != hwnd:
-                        logging.error(f"{log_prefix} robust_click: точка ({tx},{ty}) не принадлежит целевому окну (hwnd={hwnd}). Отменяю клик.")
-                        return False
-
-            # Сам клик
-            self._send_mouse_input(AppConfig.MOUSEEVENTF_LEFTDOWN)
-            time.sleep(AppConfig.ROBUST_CLICK_MOUSE_DOWN_DELAY)
-            self._send_mouse_input(AppConfig.MOUSEEVENTF_LEFTUP)
-
-            logging.info(f"{log_prefix} robust_click: Клик выполнен по ({tx},{ty}) с hwnd={hwnd}")
-            return True
-        except Exception as e:
-            logging.error(f"{log_prefix} robust_click: Ошибка при клике — {e}", exc_info=True)
+    def click_camtasia_fullscreen(self, hwnd):
+        fs_path = os.path.join(AppConfig.TEMPLATES_DIR, AppConfig.CAMTASIA_FULLSCREEN_TEMPLATE)
+        fs_coords = self.find_template(fs_path)
+        if fs_coords:
+            self.log_request.emit("Нашёл кнопку Fullscreen. Жму...", "info")
+            ok = self.double_robust_click(fs_coords[0], fs_coords[1], hwnd=hwnd)
+            logging.info(f"[Camtasia] Double click on fullscreen at {fs_coords}, ok={ok}")
+            time.sleep(AppConfig.ROBUST_CLICK_DELAY)
+            return ok
+        else:
+            self.log_request.emit("Не нашёл кнопку Fullscreen!", "warning")
+            logging.warning("[Camtasia] Не найден шаблон fullscreen")
             return False
-        finally:
-            if restore_cursor and old_pos is not None:
-                try:
-                    ctypes.windll.user32.SetCursorPos(old_pos[0], old_pos[1])
-                except Exception:
-                    pass
 
-
-    # =============================
-    # OpenCV-шаблоны (без изменений, как у тебя)
-    # =============================
     def find_template(self, template_path: str, confidence=AppConfig.DEFAULT_CV_CONFIDENCE) -> Optional[Tuple[int, int]]:
-        if not CV2_AVAILABLE or not PYAUTOGUI_AVAILABLE:
-            logging.warning("find_template: CV2 или PyAutoGUI недоступны.")
-            return None
+        if not CV2_AVAILABLE: return None
         try:
             template = cv2.imread(template_path, cv2.IMREAD_GRAYSCALE)
             if template is None:
@@ -1370,29 +906,27 @@ class WindowManager(QObject):
             self.log_request.emit(f"Ошибка OpenCV: {e}", "error")
             return None
 
+    def humanized_click(self, x: int, y: int, hwnd: int = None, log_prefix: str = ""):
+        self.click_visual_request.emit(x, y)
+        if self.robust_click(x, y, hwnd=hwnd, log_prefix=log_prefix):
+            return
+        logging.warning("robust_click не удался. Использую резервный метод (pyautogui).")
+        try:
+            if PYAUTOGUI_AVAILABLE:
+                pyautogui.click(x, y)
+                logging.info(f"{log_prefix} Выполнен резервный клик (pyautogui) по ({x},{y})")
+            else:
+                self.log_request.emit("Резервный метод клика (pyautogui) недоступен.", "error")
+        except Exception as e:
+            logging.error(f"{log_prefix} Резервный клик (pyautogui) также не удался: {e}", exc_info=True)
+
     def find_and_click_template(self, template_path: str, confidence=AppConfig.DEFAULT_CV_CONFIDENCE, hwnd: int = None, log_prefix: str = "") -> bool:
         coords = self.find_template(template_path, confidence)
         if coords:
-            self.robust_click(coords[0], coords[1], hwnd=hwnd, log_prefix=log_prefix)
+            self.humanized_click(coords[0], coords[1], hwnd=hwnd, log_prefix=log_prefix)
             return True
         return False
 
-    def click_camtasia_fullscreen(self, hwnd):
-            fs_path = os.path.join(AppConfig.TEMPLATES_DIR, AppConfig.CAMTASIA_FULLSCREEN_TEMPLATE)
-            fs_coords = self.find_template(fs_path)
-            if fs_coords:
-                self.log_request.emit("Нашёл кнопку Fullscreen. Жму...", "info")
-                ok = self.robust_click(fs_coords[0], fs_coords[1], hwnd=hwnd)
-                logging.info(f"[Camtasia] Robust click on fullscreen at {fs_coords}, ok={ok}")
-                time.sleep(AppConfig.ROBUST_CLICK_DELAY)
-                return ok
-            else:
-                self.log_request.emit("Не нашёл кнопку Fullscreen!", "warning")
-                logging.warning("[Camtasia] Не найден шаблон fullscreen")
-                return False
-
-
-    #! ИСПРАВЛЕНО: Добавлен try...finally для гарантированного закрытия хендла
     def find_windows_by_config(self, config: dict, config_key: str, main_window_hwnd: int) -> List[int]:
         window_config = config.get(config_key, {})
         if not window_config: return []
@@ -1404,22 +938,17 @@ class WindowManager(QObject):
 
         def enum_windows_callback(hwnd, _):
             if hwnd == main_window_hwnd or not win32gui.IsWindow(hwnd) or not win32gui.IsWindowVisible(hwnd) or (not arrange_minimized and win32gui.IsIconic(hwnd)): return True
-            
-            h_process = None
             try:
                 _, pid = win32process.GetWindowThreadProcessId(hwnd)
                 h_process = win32api.OpenProcess(win32con.PROCESS_QUERY_INFORMATION | win32con.PROCESS_VM_READ, False, pid)
                 process_name = os.path.basename(win32process.GetModuleFileNameEx(h_process, 0))
-                
+                win32api.CloseHandle(h_process)
                 if process_name.lower() in EXCLUDED_PROCESSES: return True
-                
                 title = win32gui.GetWindowText(hwnd)
                 if any(excluded.lower() in title.lower() for excluded in EXCLUDED_TITLES): return True
-                
                 rect = win32gui.GetWindowRect(hwnd)
                 w, h = rect[2] - rect[0], rect[3] - rect[1]
                 if w == 0 or h == 0: return True
-                
                 match = False
                 if find_method == AppConfig.FIND_METHOD_RATIO:
                     if h != 0 and (window_config[AppConfig.KEY_WIDTH] / window_config[AppConfig.KEY_HEIGHT]) * (1 - window_config[AppConfig.KEY_TOLERANCE]) <= (w / h) <= (window_config[AppConfig.KEY_WIDTH] / window_config[AppConfig.KEY_HEIGHT]) * (1 + window_config[AppConfig.KEY_TOLERANCE]): match = True
@@ -1427,15 +956,9 @@ class WindowManager(QObject):
                     if window_config[AppConfig.KEY_TITLE].lower() in title.lower() and abs(w - window_config[AppConfig.KEY_WIDTH]) <= window_config[AppConfig.KEY_TOLERANCE] and abs(h - window_config[AppConfig.KEY_HEIGHT]) <= window_config[AppConfig.KEY_TOLERANCE]: match = True
                 elif find_method == AppConfig.FIND_METHOD_TITLE:
                     if window_config[AppConfig.KEY_TITLE].lower() in title.lower(): match = True
-                
                 if match: found_windows.append(hwnd)
-            except win32api.error:
-                pass # Ошибки доступа - это нормально
             except Exception as e:
                 logging.debug(f"Ошибка при перечислении окна {hwnd}: {e}")
-            finally:
-                if h_process:
-                    win32api.CloseHandle(h_process)
             return True
 
         try:
@@ -1448,53 +971,66 @@ class WindowManager(QObject):
             self.log_request.emit(f"Ошибка сортировки окон: {e}", "warning")
         return found_windows
 
-    #! ИСПРАВЛЕНО: Добавлен try...finally для гарантированного закрытия хендла
+    def find_first_window_by_title(self, text_in_title: str, exact_match: bool = False) -> Optional[int]:
+        hwnds = []
+        def callback(hwnd, _):
+            if win32gui.IsWindow(hwnd) and win32gui.IsWindowVisible(hwnd):
+                try:
+                    title = win32gui.GetWindowText(hwnd)
+                except Exception:
+                    return
+                if (exact_match and text_in_title == title) or (not exact_match and text_in_title.lower() in title.lower()):
+                    hwnds.append(hwnd)
+        try:
+            win32gui.EnumWindows(callback, None)
+        except Exception as e:
+            logging.error("Критическая ошибка в EnumWindows (поиск по заголовку)", exc_info=True)
+        return hwnds[0] if hwnds else None
+
     def is_process_running(self, process_name_to_find: str) -> bool:
         pids = win32process.EnumProcesses()
         for pid in pids:
             if pid == 0: continue
-            h_process = None
             try:
                 h_process = win32api.OpenProcess(win32con.PROCESS_QUERY_INFORMATION | win32con.PROCESS_VM_READ, False, pid)
                 if h_process:
                     process_name = os.path.basename(win32process.GetModuleFileNameEx(h_process, 0))
+                    win32api.CloseHandle(h_process)
                     if process_name_to_find.lower() in process_name.lower():
                         return True
             except Exception:
                 continue
-            finally:
-                if h_process:
-                    win32api.CloseHandle(h_process)
         return False
 
-    def find_first_window_by_title(self,
-                                   text_in_title: str,
-                                   exact_match: bool = False,
-                                   check_visible: bool = True) -> Optional[int]:
-        matches = []
-        needle = (text_in_title or "").lower()
-
+    def find_first_window_by_process_name(self, process_name_to_find: str, check_visible: bool = True) -> Optional[int]:
+        hwnds = []
         def callback(hwnd, _):
-            if not win32gui.IsWindow(hwnd) or not win32gui.IsWindowEnabled(hwnd):
-                return True
-            if check_visible and (not win32gui.IsWindowVisible(hwnd) or win32gui.IsIconic(hwnd)):
-                return True
-            try:
-                title = win32gui.GetWindowText(hwnd) or ""
-            except Exception:
-                return True
-            t = title.lower()
-            ok = (t == needle) if exact_match else (needle in t)
-            if ok:
-                matches.append(hwnd)
-            return True
-
+            if win32gui.IsWindow(hwnd) and win32gui.IsWindowEnabled(hwnd):
+                if check_visible and (not win32gui.IsWindowVisible(hwnd) or win32gui.IsIconic(hwnd)):
+                    return
+                try:
+                    _, pid = win32process.GetWindowThreadProcessId(hwnd)
+                    h_process = win32api.OpenProcess(win32con.PROCESS_QUERY_INFORMATION | win32con.PROCESS_VM_READ, False, pid)
+                    process_name = os.path.basename(win32process.GetModuleFileNameEx(h_process, 0))
+                    win32api.CloseHandle(h_process)
+                    if process_name_to_find.lower() in process_name.lower():
+                        hwnds.append(hwnd)
+                except Exception:
+                    pass
         try:
             win32gui.EnumWindows(callback, None)
-        except Exception:
-            logging.error("Критическая ошибка в EnumWindows (поиск по заголовку)", exc_info=True)
-        return matches[0] if matches else None
+        except Exception as e:
+            logging.error("Критическая ошибка в EnumWindows (поиск по процессу)", exc_info=True)
+        return hwnds[0] if hwnds else None
 
+    def press_key(self, key_code: int):
+        try:
+            win32api.keybd_event(key_code, 0, 0, 0)
+            time.sleep(AppConfig.KEY_PRESS_DELAY)
+            win32api.keybd_event(key_code, 0, win32con.KEYEVENTF_KEYUP, 0)
+        except Exception as e:
+            logging.error("Ошибка эмуляции нажатия клавиши", exc_info=True)
+            self.log_request.emit(f"Ошибка эмуляции нажатия: {e}", "error")
 
     def close_window(self, hwnd: int):
         try:
@@ -1505,6 +1041,34 @@ class WindowManager(QObject):
         except Exception as e:
             logging.error(f"Не удалось отправить WM_CLOSE окну {hwnd}", exc_info=True)
         return False
+
+    def robust_click(self, x: int, y: int, hwnd: int = None, delay: float = AppConfig.ROBUST_CLICK_DELAY, log_prefix: str = "") -> bool:
+        try:
+            if hwnd:
+                if win32gui.IsIconic(hwnd):
+                    win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
+                win32gui.SetForegroundWindow(hwnd)
+                time.sleep(delay)
+                fg = win32gui.GetForegroundWindow()
+                if fg != hwnd:
+                    win32gui.SetForegroundWindow(hwnd)
+                    time.sleep(AppConfig.ROBUST_CLICK_ACTIVATION_DELAY)
+                    fg = win32gui.GetForegroundWindow()
+                if fg != hwnd:
+                    logging.error(f"{log_prefix} robust_click: Не удалось активировать окно для клика (hwnd={hwnd}, fg={fg})")
+                    return False
+            old_pos = win32api.GetCursorPos()
+            ctypes.windll.user32.SetCursorPos(x, y)
+            time.sleep(AppConfig.ROBUST_CLICK_SET_CURSOR_DELAY)
+            win32api.mouse_event(win32con.MOUSEEVENTF_LEFTDOWN, x, y, 0, 0)
+            time.sleep(AppConfig.ROBUST_CLICK_MOUSE_DOWN_DELAY)
+            win32api.mouse_event(win32con.MOUSEEVENTF_LEFTUP, x, y, 0, 0)
+            logging.info(f"{log_prefix} robust_click: Клик выполнен по ({x},{y}) с hwnd={hwnd}")
+            ctypes.windll.user32.SetCursorPos(old_pos[0], old_pos[1])
+            return True
+        except Exception as e:
+            logging.error(f"{log_prefix} robust_click: Ошибка при клике — {e}", exc_info=True)
+            return False
 
 class TelegramNotifier(QObject):
     def __init__(self, token, chat_id):
@@ -1536,60 +1100,23 @@ class TelegramNotifier(QObject):
             finally:
                 self.message_queue.task_done()
 
-#! ИСПРАВЛЕНО: Добавлен try...finally для гарантированного закрытия хендла
 def find_camtasia_window() -> Optional[int]:
-    wanted_proc = AppConfig.CAMTASIA_PROCESS_NAME.lower()  # например, "recorder"
-    title_markers = [t.lower() for t in AppConfig.CAMTASIA_WINDOW_TITLES]  # ["camtasia", "recording...", "paused..."]
-    candidates: list[int] = []
-
+    result = []
     def callback(hwnd, _):
-        h_process = None
+        if not win32gui.IsWindow(hwnd) or not win32gui.IsWindowVisible(hwnd): return
         try:
             _, pid = win32process.GetWindowThreadProcessId(hwnd)
-            h_process = win32api.OpenProcess(
-                win32con.PROCESS_QUERY_INFORMATION | win32con.PROCESS_VM_READ, False, pid
-            )
-            proc_name = os.path.basename(win32process.GetModuleFileNameEx(h_process, 0)).lower()
-
-            if wanted_proc not in proc_name:
-                return True
-
-            title = win32gui.GetWindowText(hwnd).lower()
-            if any(m in title for m in title_markers):
-                candidates.append(hwnd)
-
+            h_process = win32api.OpenProcess(win32con.PROCESS_QUERY_INFORMATION | win32con.PROCESS_VM_READ, False, pid)
+            process_name = os.path.basename(win32process.GetModuleFileNameEx(h_process, 0))
+            win32api.CloseHandle(h_process)
+            if AppConfig.CAMTASIA_PROCESS_NAME not in process_name.lower(): return
+            title = win32gui.GetWindowText(hwnd)
+            if any(t.lower() in title.lower() for t in AppConfig.CAMTASIA_WINDOW_TITLES):
+                result.append(hwnd)
         except Exception:
-            # тихо пропускаем проблемные окна
             pass
-        finally:
-            if h_process:
-                try:
-                    win32api.CloseHandle(h_process)
-                except Exception:
-                    pass
-        return True
-
-    win32gui.EnumWindows(callback, None)
-
-    if not candidates:
-        return None
-
-    # Приоритет: recording > paused > прочее
-    def score(hwnd: int) -> int:
-        try:
-            t = win32gui.GetWindowText(hwnd).lower()
-            if "recording" in t:
-                return 2
-            if "paused" in t:
-                return 1
-            return 0
-        except Exception:
-            return -1
-
-    candidates.sort(key=score, reverse=True)
-    return candidates[0]
-
-
+    win32gui.EnumWindows(callback, result)
+    return result[0] if result else None
 
 class UpdateManager(QObject):
     log_request = pyqtSignal(str, str)
@@ -1603,16 +1130,15 @@ class UpdateManager(QObject):
 
     def is_new_version_available(self, current_v_str: str, latest_v_str: str) -> bool:
         try:
-            from packaging.version import parse as parse_version #! Используем надежную библиотеку для сравнения
-            return parse_version(latest_v_str) > parse_version(current_v_str)
-        except ImportError:
-            # Фоллбэк, если packaging не установлен
             current = [int(p) for p in current_v_str.split('-')[0].lstrip('v').split('.')]
             latest = [int(p) for p in latest_v_str.lstrip('v').split('.')]
+            max_len = max(len(current), len(latest))
+            current += [0] * (max_len - len(current))
+            latest += [0] * (max_len - len(latest))
             return latest > current
         except Exception as e:
             logging.error(f"Ошибка сравнения версий: {e}.", exc_info=True)
-            return False
+            return latest_v_str > current_v_str
 
     def check_for_updates(self):
         self.status_update.emit(AppConfig.LOBBY_MSG_UPDATE_CHECK)
@@ -1695,12 +1221,7 @@ class UpdateManager(QObject):
             with open(AppConfig.UPDATER_SCRIPT_NAME, "w", encoding="cp866") as f:
                 f.write(script_content)
             subprocess.Popen([AppConfig.UPDATER_SCRIPT_NAME], shell=True, creationflags=subprocess.CREATE_NEW_CONSOLE)
-            QMetaObject.invokeMethod(
-                QApplication.instance(),
-                "quit",
-                Qt.ConnectionType.QueuedConnection
-            )
-
+            QApplication.instance().quit()
 
         except Exception as e:
             self.log_request.emit(f"Ошибка при обновлении: {e}", "error")
@@ -1791,8 +1312,6 @@ class MainWindow(QMainWindow):
         self.telegram_notifier = TelegramNotifier(AppConfig.TELEGRAM_BOT_TOKEN, AppConfig.TELEGRAM_CHAT_ID)
         self.click_indicator = ClickIndicator()
         self._executor = ThreadPoolExecutor(max_workers=AppConfig.THREAD_POOL_WORKERS)
-        self.injector_minimizer = InjectorMinimizer(self.window_manager, AppConfig.INJECTOR_WINDOW_TITLE)
-        self.injector_minimizer.finished.connect(self._on_injector_minimize_finished)
 
         self.current_project = None
         self.is_auto_record_enabled = True
@@ -1815,125 +1334,11 @@ class MainWindow(QMainWindow):
         self.init_timers()
         self.init_startup_checks()
 
-        self._uptime_nag_dialog = None
-        self._uptime_snoozed_until = 0.0  # monotonic seconds
-        self._uptime_kill_done = False
-        self.setWindowIcon(QIcon(icon_path))
-
-
-
-
     def closeEvent(self, event):
         logging.info("Приложение закрывается, остановка таймеров...")
         for timer in self.timers.values():
             timer.stop()
-        self._executor.shutdown(wait=False) #! ДОБАВЛЕНО: Корректное завершение пула потоков
         super().closeEvent(event)
-
-    def _enum_windows_for_pid(self, pid: int) -> list[int]:
-        hwnds = []
-        def cb(hwnd, _):
-            try:
-                if win32gui.IsWindow(hwnd) and win32gui.IsWindowVisible(hwnd):
-                    _, wpid = win32process.GetWindowThreadProcessId(hwnd)
-                    if wpid == pid:
-                        hwnds.append(hwnd)
-            except Exception:
-                pass
-        try:
-            win32gui.EnumWindows(cb, None)
-        except Exception:
-            pass
-        return hwnds
-
-    def close_processes_by_names(self, names: list[str]) -> dict:
-        """
-        Закрывает процессы с именами из списка.
-        1) Пытается мягко (WM_CLOSE) если есть окна,
-        2) ждёт grace, затем terminate/kill (если разрешено).
-        Возвращает статистику по действиям.
-        """
-        stats = {"matched": 0, "soft_closed": 0, "terminated": 0, "killed": 0, "errors": 0}
-        if not names:
-            return stats
-        targets = {n.lower() for n in names}
-
-        if not PSUTIL_AVAILABLE:
-            self.log("psutil не установлен: пропускаю закрытие процессов", "warning")
-            return stats
-
-        try:
-            victims = []
-            for p in psutil.process_iter(["pid", "name"]):
-                try:
-                    if (nm := p.info.get("name")) and nm.lower() in targets:
-                        victims.append(p)
-                except (psutil.NoSuchProcess, psutil.AccessDenied):
-                    continue
-
-            stats["matched"] = len(victims)
-            if not victims:
-                return stats
-
-            # 1) мягкое закрытие (для оконных приложений)
-            for p in victims:
-                try:
-                    self._soft_close_pid_windows(p.pid)
-                    stats["soft_closed"] += 1
-                except Exception:
-                    stats["errors"] += 1
-
-            # 2) ждём grace
-            if AppConfig.PROCESS_CLOSE_GRACE_MS > 0:
-                QThread.msleep(AppConfig.PROCESS_CLOSE_GRACE_MS)  # в GUI-потоке лучше не спать долго; ok, т.к. диалог модальный
-                # Если хочешь не блокировать UI — переделаем на QTimer.singleShot цепочкой.
-
-            # 3) terminate/kill оставшихся
-            for p in victims:
-                try:
-                    if not p.is_running():
-                        continue
-                    p.terminate()
-                    stats["terminated"] += 1
-                except (psutil.NoSuchProcess, psutil.AccessDenied):
-                    continue
-                except Exception:
-                    stats["errors"] += 1
-
-            if AppConfig.PROCESS_KILL_FORCE:
-                # ещё чуть подождём и, если живы — kill
-                try:
-                    psutil.wait_procs(victims, timeout=1.5)
-                except Exception:
-                    pass
-                for p in victims:
-                    try:
-                        if p.is_running():
-                            p.kill()
-                            stats["killed"] += 1
-                    except (psutil.NoSuchProcess, psutil.AccessDenied):
-                        continue
-                    except Exception:
-                        stats["errors"] += 1
-
-        except Exception as e:
-            self.log(f"Ошибка при закрытии процессов: {e}", "error")
-            stats["errors"] += 1
-
-        self.log(f"Закрытие процессов: {stats}", "info")
-        return stats
-
-
-    def _soft_close_pid_windows(self, pid: int):
-        try:
-            for hwnd in self._enum_windows_for_pid(pid):
-                try:
-                    win32gui.PostMessage(hwnd, win32con.WM_CLOSE, 0, 0)
-                except Exception:
-                    pass
-        except Exception:
-            pass
-
 
     def get_current_screen(self):
         try:
@@ -1945,46 +1350,6 @@ class MainWindow(QMainWindow):
         self.notification_manager.show(message, message_type)
         if message_type == 'error':
             self.telegram_notifier.send_message(AppConfig.MSG_TG_CRITICAL_ERROR.format(message))
-
-    def on_project_changed(self, new_project_name: Optional[str]):
-        if self.current_project == new_project_name: return
-
-        if self.current_project == AppConfig.PROJECT_GG and hasattr(self, 'close_tables_button'):
-            del self.close_tables_button
-
-        self.current_project = new_project_name
-        self.last_table_count = 0
-        self.timers["auto_arrange"].stop()
-        self.timers["popup_check"].stop()
-        self.update_window_title()
-
-        if new_project_name:
-            self.build_project_ui()
-            self.timers["auto_arrange"].start(AppConfig.AUTO_ARRANGE_INTERVAL)
-
-            if new_project_name == AppConfig.PROJECT_QQ:
-                self.position_window_top_right()
-                self.timers["popup_check"].start(AppConfig.POPUP_CHECK_INTERVAL_FAST)
-            elif new_project_name == AppConfig.PROJECT_GG:
-                self.position_gg_panel()
-                hwnd = find_camtasia_window()
-                if hwnd:
-                    move_camtasia_to_bottom_right(hwnd)
-                QTimer.singleShot(AppConfig.INJECTOR_MINIMIZE_DELAY, self.injector_minimizer.start)
-                self.timers["popup_check"].start(AppConfig.POPUP_CHECK_INTERVAL_FAST)
-
-            if self.is_automation_enabled:
-                if new_project_name == AppConfig.PROJECT_QQ: self.check_and_launch_opencv_server()
-                self.arrange_other_windows()
-        else:
-            self.build_lobby_ui(AppConfig.LOBBY_MSG_SEARCHING)
-            self.position_window_default()
-
-    def _on_injector_minimize_finished(self, success: bool):
-        if success:
-            self.log(f"Окно '{self.injector_minimizer.injector_title}' успешно свернуто.", "info")
-        else:
-            self.log(f"Не удалось свернуть окно '{self.injector_minimizer.injector_title}'!", "error")
 
     def _clear_layout(self):
         old_widget = self.centralWidget()
@@ -1998,6 +1363,7 @@ class MainWindow(QMainWindow):
         hwnd = find_camtasia_window()
         status = win32gui.GetWindowText(hwnd) if hwnd else "NotFound"
         if AppConfig.CAMTASIA_WINDOW_TITLE_RECORDING in status.lower():
+            self.hide_blocking_overlay()
             self.log("Снято с паузы успешно!", "info")
             return
 
@@ -2017,9 +1383,11 @@ class MainWindow(QMainWindow):
             QTimer.singleShot(AppConfig.CAMTASIA_HOTKEY_WAIT_INTERVAL, self._check_resume_result)
             return
 
+        self.hide_blocking_overlay()
         self.log("Camtasia: не удалось снять с паузы!", "error")
 
     def perform_camtasia_action(self, action: str):
+        #self.show_blocking_overlay(AppConfig.MSG_CAMTASIA_AUTOMATION)
         self._camtasia_action = action
         self._camtasia_attempt_idx = 0
         self._camtasia_hotkey_tried = False
@@ -2032,6 +1400,7 @@ class MainWindow(QMainWindow):
 
         if AppConfig.CAMTASIA_WINDOW_TITLE_RECORDING in status.lower():
             if self._camtasia_action == AppConfig.ACTION_START:
+                self.hide_blocking_overlay()
                 self.log("Camtasia: запись активна!", "info")
                 return
 
@@ -2069,6 +1438,7 @@ class MainWindow(QMainWindow):
                 self._camtasia_hotkey_tried = True
                 self._try_camtasia_hotkey()
             else:
+                self.hide_blocking_overlay()
                 self.log("Camtasia: не удалось выполнить действие!", "error")
 
     def _do_camtasia_click(self, template_path, hwnd):
@@ -2093,7 +1463,7 @@ class MainWindow(QMainWindow):
             #self.log("Горячая клавиша отправлена.", "warning")
             QTimer.singleShot(AppConfig.CAMTASIA_HOTKEY_WAIT_INTERVAL, self._try_camtasia_action_step)
         else:
-            pass
+            self.hide_blocking_overlay()
             #self.log("Неизвестное действие для hotkey!", "error")
 
     def init_ui(self):
@@ -2299,8 +1669,7 @@ class MainWindow(QMainWindow):
             "player_check": QTimer(self), "recorder_check": QTimer(self),
             "auto_record": QTimer(self), "auto_arrange": QTimer(self),
             "session": QTimer(self), "player_start": QTimer(self),
-            "record_cooldown": QTimer(self), "popup_check": QTimer(self),
-            "uptime_check": QTimer(self),
+            "record_cooldown": QTimer(self), "popup_check": QTimer(self)
         }
         self.timers["player_check"].timeout.connect(self.check_for_player)
         self.timers["recorder_check"].timeout.connect(self.check_for_recorder)
@@ -2311,11 +1680,21 @@ class MainWindow(QMainWindow):
         self.timers["record_cooldown"].setSingleShot(True)
         self.timers["record_cooldown"].timeout.connect(lambda: setattr(self, 'is_record_stopping', False))
         self.timers["popup_check"].timeout.connect(self.check_for_popups)
-        self.timers["uptime_check"].timeout.connect(self.check_system_uptime)
 
     def init_startup_checks(self):
         self.update_window_title()
         threading.Thread(target=self.update_manager.check_for_updates, daemon=True).start()
+
+    def show_blocking_overlay(self, message=AppConfig.MSG_BLOCKING_OVERLAY_DEFAULT):
+        #self.overlay = BlockingOverlay(message)
+        #self.overlay.show()
+        #QApplication.processEvents()
+        pass
+
+    def hide_blocking_overlay(self):
+        if hasattr(self, 'overlay') and self.overlay:
+            self.overlay.close()
+            self.overlay = None
 
     def show_main_window_and_start_logic(self):
         self.splash.close()
@@ -2334,8 +1713,38 @@ class MainWindow(QMainWindow):
         if AppConfig.TELEGRAM_REPORT_LEVEL == 'all':
             self.telegram_notifier.send_message(AppConfig.MSG_TG_HELPER_STARTED)
         self.check_system_uptime()
-        self.timers["uptime_check"].start(AppConfig.UPTIME_NAG_CHECK_INTERVAL_MS)
         self.check_admin_rights()
+
+    def on_project_changed(self, new_project_name: Optional[str]):
+        if self.current_project == new_project_name: return
+
+        if self.current_project == AppConfig.PROJECT_GG and hasattr(self, 'close_tables_button'):
+            del self.close_tables_button
+
+        self.current_project = new_project_name
+        self.last_table_count = 0
+        self.timers["auto_arrange"].stop()
+        self.timers["popup_check"].stop()
+        self.update_window_title()
+
+        if new_project_name:
+            self.build_project_ui()
+            self.timers["auto_arrange"].start(AppConfig.AUTO_ARRANGE_INTERVAL)
+
+            if new_project_name == AppConfig.PROJECT_QQ:
+                self.position_window_top_right()
+                self.timers["popup_check"].start(AppConfig.POPUP_CHECK_INTERVAL_FAST)
+            elif new_project_name == AppConfig.PROJECT_GG:
+                self.position_gg_panel()
+                QTimer.singleShot(AppConfig.INJECTOR_MINIMIZE_DELAY, self.minimize_injector_window)
+                self.timers["popup_check"].start(AppConfig.POPUP_CHECK_INTERVAL_FAST)
+
+            if self.is_automation_enabled:
+                if new_project_name == AppConfig.PROJECT_QQ: self.check_and_launch_opencv_server()
+                self.arrange_other_windows()
+        else:
+            self.build_lobby_ui(AppConfig.LOBBY_MSG_SEARCHING)
+            self.position_window_default()
 
     def check_for_player(self):
         if self.is_sending_logs: return
@@ -2383,68 +1792,21 @@ class MainWindow(QMainWindow):
         try:
             uptime_days = ctypes.windll.kernel32.GetTickCount64() / (1000 * 60 * 60 * 24)
             if uptime_days > AppConfig.UPTIME_WARN_DAYS:
-                now = time.monotonic()
-                if now < self._uptime_snoozed_until:
-                    return  # ещё действует «напомнить позже»
-                # уведомление в трей-стиле оставим как было
                 self.log(AppConfig.MSG_UPTIME_WARNING, "warning")
-
-                # показать/актуализировать окно-наг
-                if self._uptime_nag_dialog is None:
-                    self._uptime_nag_dialog = UptimeNagDialog(self, uptime_days)
-                    self._uptime_nag_dialog.snoozed.connect(self._on_uptime_snoozed)
-                    self._uptime_nag_dialog.reboot_now.connect(self._on_uptime_reboot_now)
-
-                # обновим текст аптайма при повторных вызовах (если окно уже создано)
-                if self._uptime_nag_dialog and not self._uptime_nag_dialog.isVisible():
-                    # пересоздавать не нужно; просто показать и центрировать
-                    self._uptime_nag_dialog.show()
-                elif self._uptime_nag_dialog:
-                    self._uptime_nag_dialog.raise_()
-                    self._uptime_nag_dialog.activateWindow()
-            # если аптайм снова < порога — можно позже обнулить окно при желании
-
-
         except Exception as e:
             logging.error("Не удалось проверить время работы системы", exc_info=True)
-
-    def _on_uptime_snoozed(self, minutes: int):
-        self._uptime_snoozed_until = time.monotonic() + minutes * 60
-        self._uptime_kill_done = False
-        if self._uptime_nag_dialog:
-            self._uptime_nag_dialog.deleteLater()
-            self._uptime_nag_dialog = None
-
-    def _on_uptime_reboot_now(self):
-        try:
-            # чтобы не дергали повторно
-            if getattr(self, "_reboot_initiated", False):
-                return
-            self._reboot_initiated = True
-            self._uptime_kill_done = True
-
-            # 1) закрываем процессы «мягко → подождать → terminate/kill»
-            if AppConfig.PROCESSES_TO_CLOSE:
-                self.log("Закрываю процессы перед перезагрузкой...", "info")
-                self.close_processes_by_names(AppConfig.PROCESSES_TO_CLOSE)
-
-            # 2) небольшая пауза (дать ОС «устаканиться») — 2 с
-            QTimer.singleShot(getattr(AppConfig, "REBOOT_EXTRA_WAIT_MS", 2000),
-                            lambda: subprocess.run(["shutdown", "/r", "/t", "0"], check=False))
-        except Exception as e:
-            self.log(f"Не удалось инициировать перезагрузку: {e}", "error")
 
     def handle_player_close(self):
         if not self.is_automation_enabled: return
         self.is_sending_logs = True
         self.log("Плеер закрыт. Отправляю логи...", "info")
-        
+        desktop_path = os.path.join(os.path.expanduser('~'), 'Desktop')
         launched_count = 0
-        shortcuts_to_launch = []
-        for keyword in AppConfig.LOG_SENDER_KEYWORDS:
-            path = find_desktop_shortcut(keyword)
-            if path:
-                shortcuts_to_launch.append((keyword, path))
+        try:
+            shortcuts_to_launch = [(k, os.path.join(desktop_path, f)) for f in os.listdir(desktop_path) if f.lower().endswith(AppConfig.SHORTCUT_EXTENSION) for k in AppConfig.LOG_SENDER_KEYWORDS if k in f.lower()]
+        except Exception as e:
+            self.log(f"Ошибка при поиске батника логов: {e}", "error")
+            shortcuts_to_launch = []
 
         if not shortcuts_to_launch:
             self.log("Батники для отправки логов не найдены.", "warning")
@@ -2459,7 +1821,9 @@ class MainWindow(QMainWindow):
                         self.log(f"Запущен батник отправки логов '{keyword}'.", "info")
                     except Exception as e:
                         self.log(f"Не удалось запустить ярлык для '{keyword}': {e}", "error")
-        
+        if launched_count > 0:
+            #self.log(f"Всего запущено: {launched_count}", "info")
+            pass
         self.log(f"Перезапуск плеера через {AppConfig.PLAYER_RELAUNCH_DELAY_S} секунд...", "info")
         QTimer.singleShot(AppConfig.PLAYER_RELAUNCH_DELAY_S * 1000, lambda: self.wait_for_logs_to_finish(time.monotonic()))
 
@@ -2482,19 +1846,20 @@ class MainWindow(QMainWindow):
         if self.window_manager.find_first_window_by_title(AppConfig.PLAYER_GAME_LAUNCHER_TITLE) or self.window_manager.find_first_window_by_title(AppConfig.PLAYER_LAUNCHER_PROCESS_NAME):
             self.log("Обнаружен процесс запуска/обновления плеера. Ожидание...", "info")
             return
-        
-        shortcut_path = find_desktop_shortcut(AppConfig.PLAYER_LAUNCHER_SHORTCUT_KEYWORD)
-        if shortcut_path:
-            self.log("Найден ярлык плеера. Запускаю...", "info")
-            try:
+        self.log(f"Плеер не найден, ищу ярлык '{AppConfig.PLAYER_LAUNCHER_SHORTCUT_KEYWORD}'...", "warning")
+        desktop_path = os.path.join(os.path.expanduser('~'), 'Desktop')
+        try:
+            shortcut_path = next((os.path.join(desktop_path, f) for f in os.listdir(desktop_path) if AppConfig.PLAYER_LAUNCHER_SHORTCUT_KEYWORD in f.lower() and f.lower().endswith(AppConfig.SHORTCUT_EXTENSION)), None)
+            if shortcut_path:
+                self.log("Найден ярлык плеера. Запускаю...", "info")
                 os.startfile(shortcut_path)
                 self.is_launching_player = True
                 QTimer.singleShot(AppConfig.LAUNCHER_WINDOW_ACTIVATION_TIMEOUT, lambda: setattr(self, 'is_launching_player', False))
                 self.timers["player_start"].start(AppConfig.PLAYER_AUTOSTART_INTERVAL)
-            except Exception as e:
-                self.log(f"Ошибка при запуске ярлыка плеера: {e}", "error")
-        else:
-            self.log(f"Ярлык плеера '{AppConfig.PLAYER_LAUNCHER_SHORTCUT_KEYWORD}' на рабочем столе не найден.", "error")
+            else:
+                self.log(f"Ярлык плеера '{AppConfig.PLAYER_LAUNCHER_SHORTCUT_KEYWORD}' на рабочем столе не найден.", "error")
+        except Exception as e:
+            self.log(f"Ошибка при поиске/запуске ярлыка: {e}", "error")
 
     def attempt_player_start_click(self):
         if not self.is_automation_enabled:
@@ -2518,36 +1883,38 @@ class MainWindow(QMainWindow):
         if not self.is_automation_enabled: return
         config = PROJECT_CONFIGS.get(AppConfig.PROJECT_QQ)
         if not config or self.window_manager.find_windows_by_config(config, AppConfig.KEY_CV_SERVER, self.winId()): return
-        
-        shortcut_path = find_desktop_shortcut(AppConfig.OPENCV_SHORTCUT_KEYWORD)
-        if shortcut_path:
-            self.log("Найден ярлык OpenCV. Запускаю...", "info")
-            try:
+        self.log("Сервер OpenCV не найден, ищу ярлык...", "warning")
+        desktop_path = os.path.join(os.path.expanduser('~'), 'Desktop')
+        try:
+            shortcut_path = next((os.path.join(desktop_path, f) for f in os.listdir(desktop_path) if AppConfig.OPENCV_SHORTCUT_KEYWORD in f.lower() and f.lower().endswith(AppConfig.SHORTCUT_EXTENSION)), None)
+            if shortcut_path:
+                self.log("Найден ярлык OpenCV. Запускаю...", "info")
                 os.startfile(shortcut_path)
                 QTimer.singleShot(AppConfig.OPENCV_LAUNCH_ARRANGE_DELAY, self.arrange_other_windows)
-            except Exception as e:
-                self.log(f"Ошибка при запуске ярлыка OpenCV: {e}", "error")
-        else:
-            self.log("Ярлык для OpenCV на рабочем столе не найден.", "error")
+            else:
+                self.log("Ярлык для OpenCV на рабочем столе не найден.", "error")
+        except Exception as e:
+            self.log(f"Ошибка при поиске/запуске ярлыка OpenCV: {e}", "error")
 
     def check_for_recorder(self):
         if self.is_launching_recorder or self.window_manager.is_process_running(AppConfig.CAMTASIA_PROCESS_NAME):
             if self.timers["recorder_check"].isActive(): self.timers["recorder_check"].stop()
             return
         if self.is_automation_enabled:
-            shortcut_path = find_desktop_shortcut(AppConfig.CAMTASIA_SHORTCUT_KEYWORD)
-            if shortcut_path:
-                self.log("Camtasia не найдена. Запускаю...", "warning")
-                try:
+            desktop_path = os.path.join(os.path.expanduser('~'), 'Desktop')
+            try:
+                shortcut_path = next((os.path.join(desktop_path, f) for f in os.listdir(desktop_path) if AppConfig.CAMTASIA_SHORTCUT_KEYWORD in f.lower() and f.lower().endswith(AppConfig.SHORTCUT_EXTENSION)), None)
+                if shortcut_path:
+                    self.log("Camtasia не найдена. Запускаю...", "warning")
                     os.startfile(shortcut_path)
                     self.is_launching_recorder = True
                     QTimer.singleShot(10000, lambda: setattr(self, 'is_launching_recorder', False))
                     self.timers["recorder_check"].stop()
                     QTimer.singleShot(3000, self.check_for_recorder)
-                except Exception as e:
-                    self.log(f"Ошибка при поиске/запуске Camtasia: {e}", "error")
-            else:
-                self.log("Ярлык для Camtasia на рабочем столе не найден.", "error")
+                else:
+                    self.log("Ярлык для Camtasia на рабочем столе не найден.", "error")
+            except Exception as e:
+                self.log(f"Ошибка при поиске/запуске Camtasia: {e}", "error")
         if not self.timers["recorder_check"].isActive():
             self.timers["recorder_check"].start(AppConfig.RECORDER_CHECK_INTERVAL)
 
@@ -2555,11 +1922,8 @@ class MainWindow(QMainWindow):
         hwnd = find_camtasia_window()
         is_recording = False
         if hwnd:
-            try:
-                title = win32gui.GetWindowText(hwnd)
-                is_recording = AppConfig.CAMTASIA_WINDOW_TITLE_RECORDING in title.lower()
-            except Exception:
-                pass
+            title = win32gui.GetWindowText(hwnd)
+            is_recording = AppConfig.CAMTASIA_WINDOW_TITLE_RECORDING in title.lower()
         if is_recording:
             self.log("Обнаружена активная запись. Перезапускаю для синхронизации...", "warning")
             self.stop_recording_session()
@@ -2587,125 +1951,154 @@ class MainWindow(QMainWindow):
         self.log(AppConfig.MSG_POPUP_CLOSER_ON if self.is_auto_popup_closing_enabled else AppConfig.MSG_POPUP_CLOSER_OFF, "info")
         self.auto_popup_toggle.setChecked(self.is_auto_popup_closing_enabled)
     
-    #! РЕФАКТОРИНГ: Основная логика вынесена во вложенные функции
     def check_auto_record_logic(self):
         if not self.is_auto_record_enabled or not self.current_project or self.is_record_stopping:
             return
-        
+        config = PROJECT_CONFIGS.get(self.current_project)
+        if not config:
+            return
+
         try:
+            should_be_recording = False
+            trigger_reason = ""
+
+            # === ClubGG: таймер выключения 5 минут ===
             if self.current_project == AppConfig.PROJECT_GG:
-                self._update_gg_record_state()
+                is_clubgg_visible = False
+                for hwnd in self.window_manager.find_windows_by_config(config, AppConfig.KEY_TABLE, self.winId()):
+                    try:
+                        if win32gui.IsWindowVisible(hwnd) and not win32gui.IsIconic(hwnd):
+                            _, pid = win32process.GetWindowThreadProcessId(hwnd)
+                            h_process = win32api.OpenProcess(win32con.PROCESS_QUERY_INFORMATION | win32con.PROCESS_VM_READ, False, pid)
+                            process_name = os.path.basename(win32process.GetModuleFileNameEx(h_process, 0))
+                            win32api.CloseHandle(h_process)
+                            if process_name.lower() == AppConfig.CLUBGG_PROCESS_NAME:
+                                is_clubgg_visible = True
+                                break
+                    except Exception:
+                        continue
+
+                is_chrome_visible = False
+                chrome_hwnd = self.window_manager.find_first_window_by_process_name(AppConfig.CHROME_PROCESS_NAME, check_visible=True)
+                if chrome_hwnd and win32gui.IsWindowVisible(chrome_hwnd) and not win32gui.IsIconic(chrome_hwnd):
+                    is_chrome_visible = True
+
+                should_be_recording = is_clubgg_visible or is_chrome_visible
+                if should_be_recording:
+                    trigger_reason = []
+                    if is_clubgg_visible:
+                        trigger_reason.append("ClubGG (видимое окно)")
+                    if is_chrome_visible:
+                        trigger_reason.append("Chrome (видимое окно)")
+                    trigger_reason = " и ".join(trigger_reason)
+
+                # --- Логика с таймером выключения ---
+                if not hasattr(self, "last_should_record_false_time"):
+                    self.last_should_record_false_time = None
+
+                hwnd = find_camtasia_window()
+                is_recording, is_paused = False, False
+                if hwnd:
+                    title = win32gui.GetWindowText(hwnd).lower()
+                    is_recording = AppConfig.CAMTASIA_WINDOW_TITLE_RECORDING in title
+                    is_paused = AppConfig.CAMTASIA_WINDOW_TITLE_PAUSED in title
+
+                if should_be_recording:
+                    self.last_should_record_false_time = None
+                    if not (is_recording or is_paused):
+                        self.log(f"Начинаю автозапись (обнаружен {trigger_reason})...", "info")
+                        self.start_recording_session()
+                    elif is_paused:
+                        self.log("Запись на паузе. Возобновляю...", "warning")
+                        self.perform_camtasia_action(AppConfig.ACTION_RESUME)
+                else:
+                    now = time.monotonic()
+                    if self.last_should_record_false_time is None:
+                        self.last_should_record_false_time = now
+                    if (now - self.last_should_record_false_time) >= AppConfig.AUTO_STOP_RECORD_INACTIVITY_S:
+                        if is_recording or is_paused:
+                            self.log(f"Нет активности >{AppConfig.AUTO_STOP_RECORD_INACTIVITY_S / 60:.0f} минут. Останавливаю запись...", "info")
+                            self.stop_recording_session()
+
+                self.chrome_was_visible = is_chrome_visible
+
+            # === QQ: выключение моментально, если нет окон ===
             elif self.current_project == AppConfig.PROJECT_QQ:
-                self._update_qq_record_state()
-            else: # Другие проекты со старой логикой
-                self._update_generic_record_state()
+                is_qq_visible = False
+                for hwnd in self.window_manager.find_windows_by_config(config, AppConfig.KEY_TABLE, self.winId()):
+                    try:
+                        if win32gui.IsWindowVisible(hwnd) and not win32gui.IsIconic(hwnd):
+                            _, pid = win32process.GetWindowThreadProcessId(hwnd)
+                            h_process = win32api.OpenProcess(win32con.PROCESS_QUERY_INFORMATION | win32con.PROCESS_VM_READ, False, pid)
+                            process_name = os.path.basename(win32process.GetModuleFileNameEx(h_process, 0))
+                            win32api.CloseHandle(h_process)
+                            is_qq_visible = True
+                            break
+                    except Exception:
+                        continue
+
+                is_chrome_visible = False
+                chrome_hwnd = self.window_manager.find_first_window_by_process_name(AppConfig.CHROME_PROCESS_NAME, check_visible=True)
+                if chrome_hwnd and win32gui.IsWindowVisible(chrome_hwnd) and not win32gui.IsIconic(chrome_hwnd):
+                    is_chrome_visible = True
+
+                should_be_recording = is_qq_visible or is_chrome_visible
+                trigger_reason = []
+                if is_qq_visible:
+                    trigger_reason.append("QQPK (видимый стол)")
+                if is_chrome_visible:
+                    trigger_reason.append("Chrome (видимое окно)")
+                trigger_reason = " и ".join(trigger_reason) if trigger_reason else None
+
+                hwnd = find_camtasia_window()
+                is_recording, is_paused = False, False
+                if hwnd:
+                    title = win32gui.GetWindowText(hwnd).lower()
+                    is_recording = AppConfig.CAMTASIA_WINDOW_TITLE_RECORDING in title
+                    is_paused = AppConfig.CAMTASIA_WINDOW_TITLE_PAUSED in title
+
+                if should_be_recording:
+                    if not (is_recording or is_paused):
+                        self.log(f"Начинаю автозапись (обнаружен {trigger_reason})...", "info")
+                        self.start_recording_session()
+                    elif is_paused:
+                        self.log("Запись на паузе. Возобновляю...", "warning")
+                        self.perform_camtasia_action(AppConfig.ACTION_RESUME)
+                else:
+                    if is_recording or is_paused:
+                        self.log(f"Нет активных окон QQPK/Chrome. Останавливаю запись...", "info")
+                        self.stop_recording_session()
+
+            # === Другие проекты (оставить как раньше) ===
+            else:
+                if self.window_manager.find_windows_by_config(config, AppConfig.KEY_LOBBY, self.winId()) \
+                        or self.window_manager.find_windows_by_config(config, AppConfig.KEY_TABLE, self.winId()):
+                    should_be_recording = True
+                    trigger_reason = f"активность {self.current_project}"
+
+                hwnd = find_camtasia_window()
+                is_recording, is_paused = False, False
+                if hwnd:
+                    title = win32gui.GetWindowText(hwnd).lower()
+                    is_recording = AppConfig.CAMTASIA_WINDOW_TITLE_RECORDING in title
+                    is_paused = AppConfig.CAMTASIA_WINDOW_TITLE_PAUSED in title
+
+                if should_be_recording:
+                    if not (is_recording or is_paused):
+                        self.log(f"Начинаю автозапись (обнаружен {trigger_reason})...", "info")
+                        self.start_recording_session()
+                    elif is_paused:
+                        self.log("Запись на паузе. Возобновляю...", "warning")
+                        self.perform_camtasia_action(AppConfig.ACTION_RESUME)
+                else:
+                    if is_recording or is_paused:
+                        self.log(f"Нет активности. Останавливаю запись...", "info")
+                        self.stop_recording_session()
+
         except Exception as e:
             self.log(f"Ошибка в логике автозаписи: {e}", "error")
             logging.error("Ошибка в check_auto_record_logic", exc_info=True)
 
-    def _get_process_visibility(self, config, config_key, process_name_filter=None):
-        """Проверяет, есть ли видимые окна для данного конфига и процесса."""
-        for hwnd in self.window_manager.find_windows_by_config(config, config_key, self.winId()):
-            try:
-                if win32gui.IsWindowVisible(hwnd) and not win32gui.IsIconic(hwnd):
-                    if not process_name_filter:
-                        return True # Фильтр не нужен, одного окна достаточно
-                    
-                    _, pid = win32process.GetWindowThreadProcessId(hwnd)
-                    h_process = win32api.OpenProcess(win32con.PROCESS_QUERY_INFORMATION | win32con.PROCESS_VM_READ, False, pid)
-                    process_name = os.path.basename(win32process.GetModuleFileNameEx(h_process, 0))
-                    win32api.CloseHandle(h_process)
-                    
-                    if process_name.lower() == process_name_filter.lower():
-                        return True
-            except Exception:
-                continue
-        return False
-
-    def _update_gg_record_state(self):
-        """Логика автозаписи для проекта GG."""
-        config = PROJECT_CONFIGS[AppConfig.PROJECT_GG]
-        is_clubgg_visible = self._get_process_visibility(config, AppConfig.KEY_TABLE, AppConfig.CLUBGG_PROCESS_NAME)
-        is_chrome_visible = self.window_manager.find_first_window_by_process_name(AppConfig.CHROME_PROCESS_NAME, check_visible=True) is not None
-        
-        should_be_recording = is_clubgg_visible or is_chrome_visible
-        
-        if not hasattr(self, "last_activity_time"):
-            self.last_activity_time = 0
-
-        hwnd = find_camtasia_window()
-        is_recording, is_paused = False, False
-        if hwnd:
-            title = win32gui.GetWindowText(hwnd).lower()
-            is_recording = AppConfig.CAMTASIA_WINDOW_TITLE_RECORDING in title
-            is_paused = AppConfig.CAMTASIA_WINDOW_TITLE_PAUSED in title
-
-        if should_be_recording:
-            self.last_activity_time = time.monotonic()
-            if not (is_recording or is_paused):
-                self.log(f"Начинаю автозапись (обнаружена активность GG/Chrome)...", "info")
-                self.start_recording_session()
-            elif is_paused:
-                self.log("Запись на паузе. Возобновляю...", "warning")
-                self.perform_camtasia_action(AppConfig.ACTION_RESUME)
-        else:
-            if (is_recording or is_paused) and (time.monotonic() - self.last_activity_time) > AppConfig.AUTO_STOP_RECORD_INACTIVITY_S:
-                self.log(f"Нет активности >{AppConfig.AUTO_STOP_RECORD_INACTIVITY_S / 60:.0f} мин. Останавливаю запись...", "info")
-                self.stop_recording_session()
-                self.last_activity_time = 0 # Сбрасываем таймер
-
-    def _update_qq_record_state(self):
-        """Логика автозаписи для проекта QQ."""
-        config = PROJECT_CONFIGS[AppConfig.PROJECT_QQ]
-        is_qq_visible = self._get_process_visibility(config, AppConfig.KEY_TABLE)
-        is_chrome_visible = self.window_manager.find_first_window_by_process_name(AppConfig.CHROME_PROCESS_NAME, check_visible=True) is not None
-        
-        should_be_recording = is_qq_visible or is_chrome_visible
-        
-        hwnd = find_camtasia_window()
-        is_recording, is_paused = False, False
-        if hwnd:
-            title = win32gui.GetWindowText(hwnd).lower()
-            is_recording = AppConfig.CAMTASIA_WINDOW_TITLE_RECORDING in title
-            is_paused = AppConfig.CAMTASIA_WINDOW_TITLE_PAUSED in title
-
-        if should_be_recording:
-            if not (is_recording or is_paused):
-                self.log("Начинаю автозапись (активность QQ/Chrome)...", "info")
-                self.start_recording_session()
-            elif is_paused:
-                self.log("Запись на паузе. Возобновляю...", "warning")
-                self.perform_camtasia_action(AppConfig.ACTION_RESUME)
-        else:
-            if is_recording or is_paused:
-                self.log("Нет активных окон QQ/Chrome. Останавливаю запись...", "info")
-                self.stop_recording_session()
-
-    def _update_generic_record_state(self):
-        """Стандартная логика автозаписи для других проектов."""
-        config = PROJECT_CONFIGS[self.current_project]
-        has_lobby = bool(self.window_manager.find_windows_by_config(config, AppConfig.KEY_LOBBY, self.winId()))
-        has_tables = bool(self.window_manager.find_windows_by_config(config, AppConfig.KEY_TABLE, self.winId()))
-        should_be_recording = has_lobby or has_tables
-
-        hwnd = find_camtasia_window()
-        is_recording, is_paused = False, False
-        if hwnd:
-            title = win32gui.GetWindowText(hwnd).lower()
-            is_recording = AppConfig.CAMTASIA_WINDOW_TITLE_RECORDING in title
-            is_paused = AppConfig.CAMTASIA_WINDOW_TITLE_PAUSED in title
-
-        if should_be_recording:
-            if not (is_recording or is_paused):
-                self.log(f"Начинаю автозапись (активность {self.current_project})...", "info")
-                self.start_recording_session()
-            elif is_paused:
-                self.log("Запись на паузе. Возобновляю...", "warning")
-                self.perform_camtasia_action(AppConfig.ACTION_RESUME)
-        else:
-            if is_recording or is_paused:
-                self.log("Нет активности. Останавливаю запись...", "info")
-                self.stop_recording_session()
 
     def start_recording_session(self):
         self.perform_camtasia_action(AppConfig.ACTION_START)
@@ -2779,7 +2172,7 @@ class MainWindow(QMainWindow):
         if not config or AppConfig.KEY_TABLE not in config:
             self.log(f"Нет конфига столов для {self.current_project}.", "warning")
             return
-        found_windows = self.window_manager.find_windows_by_config(config, AppConfig.KEY_TABLE, int(self.winId()))
+        found_windows = self.window_manager.find_windows_by_config(config, AppConfig.KEY_TABLE, self.winId())
         if not found_windows:
             self.log(AppConfig.MSG_ARRANGE_TABLES_NOT_FOUND, "warning")
             return
@@ -2879,7 +2272,8 @@ class MainWindow(QMainWindow):
 
         self.position_player_window(config)
         if self.current_project == AppConfig.PROJECT_GG:
-            QTimer.singleShot(AppConfig.INJECTOR_MINIMIZE_DELAY, self.injector_minimizer.start)
+            self.minimize_injector_window()
+        self.position_recorder_window()
         if self.current_project == AppConfig.PROJECT_GG:
             self.position_lobby_window(config)
         elif self.current_project == AppConfig.PROJECT_QQ:
@@ -2929,6 +2323,17 @@ class MainWindow(QMainWindow):
             except Exception as e:
                 self.log(f"Ошибка позиционирования Camtasia: {e}", "error")
 
+    def minimize_injector_window(self):
+        injector_hwnd = self.window_manager.find_first_window_by_title(AppConfig.INJECTOR_WINDOW_TITLE, exact_match=False)
+        if injector_hwnd and win32gui.IsWindow(injector_hwnd):
+            try:
+                win32gui.ShowWindow(injector_hwnd, win32con.SW_MINIMIZE)
+                self.log(f"Окно '{AppConfig.INJECTOR_WINDOW_TITLE}' свернуто.", "info")
+            except Exception as e:
+                self.log(f"Не удалось свернуть окно '{AppConfig.INJECTOR_WINDOW_TITLE}': {e}", "error")
+        else:
+            logging.warning(f"Окно '{AppConfig.INJECTOR_WINDOW_TITLE}' для сворачивания не найдено.")
+
     def focus_window(self, hwnd: int):
         try:
             if self.shell: self.shell.SendKeys('%')
@@ -2944,7 +2349,7 @@ class MainWindow(QMainWindow):
         self.log(f"Закрываю все столы для проекта {self.current_project}...", "info")
         config = PROJECT_CONFIGS.get(self.current_project)
         if not config: return
-        found_windows = self.window_manager.find_windows_by_config(config, AppConfig.KEY_TABLE, int(self.winId()))
+        found_windows = self.window_manager.find_windows_by_config(config, AppConfig.KEY_TABLE, self.winId())
         if not found_windows:
             self.log("Столы для закрытия не найдены.", "warning")
             return
@@ -3073,6 +2478,20 @@ class MainWindow(QMainWindow):
         except Exception as e:
             logging.error("Could not position GG panel", exc_info=True)
 
+def try_launch_camtasia_shortcut():
+    desktop_path = os.path.join(os.path.expanduser('~'), 'Desktop')
+    try:
+        shortcut_path = next((os.path.join(desktop_path, f) for f in os.listdir(desktop_path) if AppConfig.CAMTASIA_SHORTCUT_KEYWORD in f.lower() and f.lower().endswith(AppConfig.SHORTCUT_EXTENSION)), None)
+        if shortcut_path:
+            os.startfile(shortcut_path)
+            logging.info("Запущен ярлык Camtasia.")
+            return True
+        else:
+            logging.warning("Ярлык Camtasia на рабочем столе не найден.")
+    except Exception as e:
+        logging.error(f"Ошибка при запуске ярлыка Camtasia: {e}")
+    return False
+
 class SingleInstance:
     """Класс для проверки и удержания мьютекса, чтобы предотвратить запуск второй копии приложения."""
     def __init__(self, name):
@@ -3080,97 +2499,20 @@ class SingleInstance:
         self.last_error = windll.kernel32.GetLastError()
     
     def is_already_running(self):
-        return self.last_error == AppConfig.ERROR_ALREADY_EXISTS
-
-def _enable_dpi_awareness():
-    try:
-        ctypes.windll.shcore.SetProcessDpiAwareness(2) # PER_MONITOR_DPI_AWARE_V2
-    except Exception:
-        try:
-            ctypes.windll.user32.SetProcessDPIAware()
-        except Exception:
-            pass
-
-#! НОВОЕ: Настройка логирования в файл
-def setup_logging():
-    """Настраивает систему логирования для записи в файл и вывода в консоль."""
-    log_dir = os.path.join(os.getenv('APPDATA'), AppConfig.LOG_DIR_NAME)
-    os.makedirs(log_dir, exist_ok=True)
-    log_file = os.path.join(log_dir, AppConfig.LOG_FILE_NAME)
-
-    log_level = logging.DEBUG if AppConfig.DEBUG_MODE else logging.INFO
-    
-    # Создаем обработчики
-    console_handler = logging.StreamHandler(sys.stdout)
-    file_handler = logging.handlers.RotatingFileHandler(
-        log_file, maxBytes=5*1024*1024, backupCount=2, encoding='utf-8'
-    )
-    
-    # Создаем форматтер
-    formatter = logging.Formatter(
-        '%(asctime)s - %(levelname)s - [%(threadName)s:%(funcName)s] - %(message)s'
-    )
-    console_handler.setFormatter(formatter)
-    file_handler.setFormatter(formatter)
-    
-    # Настраиваем корневой логгер
-    root_logger = logging.getLogger()
-    root_logger.setLevel(log_level)
-    root_logger.addHandler(console_handler)
-    root_logger.addHandler(file_handler)
-    
-    logging.info("="*50)
-    logging.info(f"Логирование настроено. Уровень: {logging.getLevelName(log_level)}. Файл: {log_file}")
-    logging.info(f"Версия OiHelper: {AppConfig.CURRENT_VERSION}")
-
-#! НОВОЕ: Глобальный обработчик исключений
-def global_exception_hook(exctype, value, traceback):
-    """Перехватывает необработанные исключения, логирует их и сообщает пользователю."""
-    import traceback as tb
-    
-    logging.critical("!!! КРИТИЧЕСКАЯ НЕОБРАБОТАННАЯ ОШИБКА !!!", exc_info=(exctype, value, traceback))
-    
-    # Формируем сообщение для пользователя
-    tb_str = "".join(tb.format_exception(exctype, value, traceback))
-    error_msg = (
-        "В приложении произошла критическая ошибка, и оно будет закрыто.\n\n"
-        "Пожалуйста, отправьте разработчику файл лога для анализа.\n\n"
-        f"Файл лога находится здесь:\n{os.path.join(os.getenv('APPDATA'), AppConfig.LOG_DIR_NAME, AppConfig.LOG_FILE_NAME)}\n\n"
-        f"Ошибка:\n{tb_str}"
-    )
-    
-    # Показываем сообщение
-    error_box = QMessageBox()
-    error_box.setIcon(QMessageBox.Icon.Critical)
-    error_box.setText("Критическая ошибка OiHelper")
-    error_box.setInformativeText(error_msg)
-    error_box.setWindowTitle("Критическая ошибка")
-    error_box.setStandardButtons(QMessageBox.StandardButton.Ok)
-    error_box.exec()
-
-    sys.__excepthook__(exctype, value, traceback)
-
+        return self.last_error == 183 # ERROR_ALREADY_EXISTS
 
 # ===================================================================
 # 6. ТОЧКА ВХОДА В ПРИЛОЖЕНИЕ
 # ===================================================================
 if __name__ == '__main__':
     instance = SingleInstance(AppConfig.MUTEX_NAME)
-
     if instance.is_already_running():
-        # Вместо тихого выхода, можно показать сообщение
-        ctypes.windll.user32.MessageBoxW(0, "OiHelper уже запущен.", "OiHelper", 0x40 | 0x10)
-        sys.exit(1)
+        logging.warning("Обнаружена уже запущенная копия OiHelper. Завершение работы.")
+        sys.exit(0)
 
-    setup_logging() #! ДОБАВЛЕНО: Вызов настройки логирования
-    sys.excepthook = global_exception_hook #! ДОБАВЛЕНО: Установка глобального обработчика ошибок
-
-    _enable_dpi_awareness()
     app = QApplication(sys.argv)
     splash = SplashScreen()
     splash.show()
-
-    app.setWindowIcon(QIcon(icon_path))
 
     def on_update_progress(value, stage):
         splash.set_progress(value, stage)
@@ -3179,8 +2521,4 @@ if __name__ == '__main__':
 
     main_window = MainWindow(splash)
     main_window.update_manager.progress_changed.connect(on_update_progress)
-    
-    try:
-        sys.exit(app.exec())
-    except Exception as e:
-        logging.critical("Неперехваченное исключение в app.exec()", exc_info=True)
+    sys.exit(app.exec())

@@ -11,7 +11,6 @@ import zipfile
 import time
 import logging
 import ctypes
-import shutil
 from ctypes import wintypes, windll
 import queue
 import random
@@ -20,15 +19,8 @@ from typing import Optional, List, Tuple
 from concurrent.futures import ThreadPoolExecutor
 from PyQt6.QtCore import QMetaObject
 import logging.handlers
-from PyQt6.QtGui import QGuiApplication, QCursor
 
 # Попытка импортировать опциональные библиотеки и установить флаги доступности
-try:
-    import psutil
-    PSUTIL_AVAILABLE = True
-except Exception:
-    PSUTIL_AVAILABLE = False
-
 try:
     import pyautogui
     PYAUTOGUI_AVAILABLE = True
@@ -57,7 +49,7 @@ from PyQt6.QtWidgets import (
     QGridLayout, QHBoxLayout, QFrame, QSizePolicy, QGraphicsDropShadowEffect,
     QComboBox, QProgressBar, QMessageBox
 )
-from PyQt6.QtCore import QObject, QTimer, pyqtSignal, Qt, QPropertyAnimation, QRect, QEasingCurve, pyqtProperty, QThread
+from PyQt6.QtCore import QObject, QTimer, pyqtSignal, Qt, QPropertyAnimation, QRect, QEasingCurve, pyqtProperty
 from PyQt6.QtGui import QIcon, QColor, QFont, QPainter, QBrush, QPen
 from PyQt6.QtSvg import QSvgRenderer
 
@@ -79,30 +71,17 @@ except AttributeError:
 # 1. КОНФИГУРАЦИЯ И СТИЛИ
 # ===================================================================
 
-try:
-    import win32con
-except ImportError:
-    # Создадим заглушки, если win32con не установлен,
-    # чтобы код оставался синтаксически верным.
-    class Win32ConMock:
-        VK_F9 = 0x78
-        VK_F10 = 0x79
-    win32con = Win32ConMock()
-
 class AppConfig:
-    """Централизованная конфигурация приложения с ускоренными задержками."""
+    """Централизованная конфигурация приложения."""
     # --- Общие настройки приложения ---
     DEBUG_MODE = False
-    CURRENT_VERSION = "7.32"
+    CURRENT_VERSION = "7.15" 
     MUTEX_NAME = "OiHelperMutex"
     APP_TITLE_TEMPLATE = "OiHelper v{version}"
     ICON_PATH = 'icon.ico'
     LOG_DIR_NAME = 'OiHelperLogs'
     LOG_FILE_NAME = 'app.log'
     THREAD_POOL_WORKERS = 2
-    PROCESSES_TO_CLOSE: list[str] = ["chrome.exe","clubgg.exe","nekoray.exe","sandman.exe","camrecorder.exe","nekoray_core.exe","qqpoker.exe","holdemdesktop.exe"]
-    PROCESS_CLOSE_GRACE_MS = 5000  # Было: 3000
-    PROCESS_KILL_FORCE = True
 
     # --- Настройки GitHub и обновлений ---
     GITHUB_REPO = "Vater-v/OiHelper"
@@ -110,15 +89,15 @@ class AppConfig:
     UPDATE_ZIP_NAME = "update.zip"
     UPDATE_TEMP_FOLDER = "update_temp"
     UPDATER_SCRIPT_NAME = "updater.bat"
-    UPDATE_CHECK_TIMEOUT_S = 10      # Было: 10
-    UPDATE_DOWNLOAD_TIMEOUT_S = 60  # Было: 60
+    UPDATE_CHECK_TIMEOUT_S = 10
+    UPDATE_DOWNLOAD_TIMEOUT_S = 60
     UPDATE_CHUNK_SIZE = 8192
 
     # --- Настройки Telegram Bot ---
     TELEGRAM_BOT_TOKEN = os.environ.get("OIHELPER_TG_TOKEN", '')
     TELEGRAM_CHAT_ID = os.environ.get("OIHELPER_TG_CHAT_ID", '')
     TELEGRAM_REPORT_LEVEL = 'all'
-    TELEGRAM_API_TIMEOUT_S = 10      # Было: 10
+    TELEGRAM_API_TIMEOUT_S = 10
     TELEGRAM_MAX_MSG_LEN = 4096
     TELEGRAM_TRUNCATE_SUFFIX = "\n[...]"
 
@@ -139,56 +118,56 @@ class AppConfig:
     CAMTASIA_WINDOW_TITLE_PAUSED = "paused..."
 
     # --- Временные интервалы (в миллисекундах, если не указано иное) ---
-    PLAYER_CHECK_INTERVAL = 250                 # Было: 700
-    PLAYER_AUTOSTART_INTERVAL = 200             # Было: 500
-    AUTO_RECORD_INTERVAL = 250                  # Было: 600
-    AUTO_ARRANGE_INTERVAL = 300                 # Было: 800
-    RECORDER_CHECK_INTERVAL = 300               # Было: 800
-    POPUP_CHECK_INTERVAL_FAST = 200             # Было: 750
-    POPUP_CHECK_INTERVAL_SLOW = 3000            # Было: 10000
-    POPUP_FAST_SCAN_DURATION_S = 60             # Было: 120
-    NOTIFICATION_DURATION = 2500                # Было: 4500
-    STATUS_MESSAGE_DURATION = 2000              # Было: 3500
-    LOG_SENDER_TIMEOUT_S = 60                   # Было: 300
-    PLAYER_RELAUNCH_DELAY_S = 2                 # Было: 5
-    RECORD_RESTART_COOLDOWN_S = 2               # Было: 5
-    SESSION_PROGRESS_UPDATE_INTERVAL = 500      # Было: 1000
-    CAMTASIA_ACTION_RETRY_INTERVAL = 150        # Было: 350
-    CAMTASIA_HOTKEY_WAIT_INTERVAL = 150         # Было: 400
-    CAMTASIA_LAUNCH_WAIT_S = 1                  # Было: 2
-    CAMTASIA_LAUNCH_POLL_INTERVAL_MS = 200      # Было: 500
-    CAMTASIA_SYNC_RESTART_DELAY = 150           # Было: 400
-    LOG_WAIT_RETRY_INTERVAL = 1000              # Было: 3000
-    LAUNCHER_WINDOW_ACTIVATION_TIMEOUT = 2000   # Было: 5000
-    OPENCV_LAUNCH_ARRANGE_DELAY = 400           # Было: 1000
-    TABLE_ARRANGE_ON_CHANGE_DELAY = 200         # Было: 500
-    INJECTOR_MINIMIZE_DELAY = 400               # Было: 1000
-    SESSION_LIMIT_HANDLER_DELAY = 50            # Было: 100
-    AUTO_STOP_RECORD_INACTIVITY_S = 300         # Было: 300 (2 минуты)
+    PLAYER_CHECK_INTERVAL = 700
+    PLAYER_AUTOSTART_INTERVAL = 500
+    AUTO_RECORD_INTERVAL = 600
+    AUTO_ARRANGE_INTERVAL = 800
+    RECORDER_CHECK_INTERVAL = 800
+    POPUP_CHECK_INTERVAL_FAST = 750
+    POPUP_CHECK_INTERVAL_SLOW = 10000
+    POPUP_FAST_SCAN_DURATION_S = 120
+    NOTIFICATION_DURATION = 4500
+    STATUS_MESSAGE_DURATION = 3500
+    LOG_SENDER_TIMEOUT_S = 300
+    PLAYER_RELAUNCH_DELAY_S = 10
+    RECORD_RESTART_COOLDOWN_S = 5
+    SESSION_PROGRESS_UPDATE_INTERVAL = 1000
+    CAMTASIA_ACTION_RETRY_INTERVAL = 350
+    CAMTASIA_HOTKEY_WAIT_INTERVAL = 400
+    CAMTASIA_LAUNCH_WAIT_S = 2
+    CAMTASIA_LAUNCH_POLL_INTERVAL_MS = 500
+    CAMTASIA_SYNC_RESTART_DELAY = 400
+    LOG_WAIT_RETRY_INTERVAL = 3000
+    LAUNCHER_WINDOW_ACTIVATION_TIMEOUT = 5000
+    OPENCV_LAUNCH_ARRANGE_DELAY = 1000
+    TABLE_ARRANGE_ON_CHANGE_DELAY = 500
+    INJECTOR_MINIMIZE_DELAY = 1000
+    SESSION_LIMIT_HANDLER_DELAY = 100
+    AUTO_STOP_RECORD_INACTIVITY_S = 300  # 5 минут
 
     # --- Размеры и расположение UI ---
     DEFAULT_WIDTH = 350
     DEFAULT_HEIGHT = 250
-    GG_UI_WIDTH = 850
+    GG_UI_WIDTH = 800
     GG_UI_HEIGHT = 100
-    WINDOW_MARGIN = 0
+    WINDOW_MARGIN = 1
     CLICK_INDICATOR_SIZE = 45
-    CLICK_INDICATOR_DURATION = 350              # Было: 250
+    CLICK_INDICATOR_DURATION = 250
     SPLASH_WIDTH = 300
     SPLASH_HEIGHT = 100
     SPLASH_PROGRESS_HEIGHT = 10
     NOTIFICATION_WIDTH = 420
     NOTIFICATION_MAX_COUNT = 5
-    NOTIFICATION_FADE_INTERVAL = 10             # Было: 20
+    NOTIFICATION_FADE_INTERVAL = 20
     PROGRESS_BAR_HEIGHT = 6
-    PROGRESS_BAR_ANIMATION_DURATION = 500       # Было: 1000
-    PROGRESS_BAR_ALERT_BLINK_INTERVAL = 400     # Было: 400
+    PROGRESS_BAR_ANIMATION_DURATION = 1000
+    PROGRESS_BAR_ALERT_BLINK_INTERVAL = 400
     TOGGLE_SWITCH_WIDTH = 40
     TOGGLE_SWITCH_HEIGHT = 22
-    TOGGLE_ANIMATION_DURATION = 200             # Было: 200
+    TOGGLE_ANIMATION_DURATION = 200
     RECORDER_FIXED_WIDTH = 410
     RECORDER_FIXED_HEIGHT = 105
-    RECORDER_BOTTOM_MARGIN = 0
+    RECORDER_BOTTOM_MARGIN = 30
     QQ_DYNAMIC_ARRANGE_THRESHOLD = 4
     QQ_DYNAMIC_TABLES_PER_ROW = 5
     QQ_DYNAMIC_SCALE_FACTOR = 0.6
@@ -214,9 +193,6 @@ class AppConfig:
     MSG_LIMIT_REACHED = "<b>Лимит!</b>"
     MSG_UPDATE_FAIL = "Ошибка обновления. Работа в оффлайн-режиме."
     MSG_UPTIME_WARNING = "Компьютер не перезагружался более 5 дней."
-    UPTIME_NAG_CHECK_INTERVAL_MS = 60 * 1000    # Было: 5 * 60 * 1000 (проверка каждую минуту)
-    UPTIME_NAG_SNOOZE_MIN = 60                  # Было: 240 (напомнить через час)
-    UPTIME_NAG_BLINK_INTERVAL_MS = 300          # Было: 450
     MSG_ADMIN_WARNING = "Нет прав администратора. Функции могут быть ограничены."
     MSG_ARRANGE_TABLES_NOT_FOUND = "Столы для расстановки не найдены."
     MSG_PROJECT_UNDEFINED = "Проект не определен. Расстановка невозможна."
@@ -243,21 +219,22 @@ class AppConfig:
     UPTIME_WARN_DAYS = 5
 
     # --- Параметры автоматизации и кликов ---
-    ROBUST_CLICK_DELAY = 0.05                 # Было: 0.13
-    ROBUST_CLICK_ACTIVATION_DELAY = 0.03      # Было: 0.07
-    ROBUST_CLICK_SET_CURSOR_DELAY = 0.03      # Было: 0.07
-    ROBUST_CLICK_MOUSE_DOWN_DELAY = 0.01      # Было: 0.02
-    SENDINPUT_MOVE_DELAY = 0.01               # Было: 0.03
-    SENDINPUT_CLICK_INTERVAL_MIN = 0.02       # Было: 0.05
-    SENDINPUT_CLICK_INTERVAL_MAX = 0.05       # Было: 0.1
-    KEY_PRESS_DELAY = 0.01                    # Было: 0.03
-    KEY_PRESS_WAIT_AFTER = 0.05               # Было: 0.15
+    ROBUST_CLICK_DELAY = 0.13
+    ROBUST_CLICK_ACTIVATION_DELAY = 0.07
+    ROBUST_CLICK_SET_CURSOR_DELAY = 0.07
+    ROBUST_CLICK_MOUSE_DOWN_DELAY = 0.02
+    DOUBLE_ROBUST_CLICK_INTERVAL = 0.24
+    SENDINPUT_MOVE_DELAY = 0.03
+    SENDINPUT_CLICK_INTERVAL_MIN = 0.05
+    SENDINPUT_CLICK_INTERVAL_MAX = 0.1
+    KEY_PRESS_DELAY = 0.03
+    KEY_PRESS_WAIT_AFTER = 0.15
     CAMTASIA_MAX_ACTION_ATTEMPTS = 6
     CAMTASIA_RESUME_CHECK_ATTEMPTS = 6
-    CAMTASIA_RESUME_CHECK_INTERVAL = 150      # Было: 400
+    CAMTASIA_RESUME_CHECK_INTERVAL = 400
     DEFAULT_CV_CONFIDENCE = 0.73
-    POPUP_ACTION_DELAY = 0.2                  # Было: 0.5
-    BONUS_SPIN_WAIT_S = 1                     # Было: 4
+    POPUP_ACTION_DELAY = 0.5
+    BONUS_SPIN_WAIT_S = 4
 
     # --- Пути к файлам и ключевые слова ---
     LOG_SENDER_KEYWORDS = ["endsess", "logbot"]
@@ -304,6 +281,7 @@ class AppConfig:
     FIND_METHOD_TITLE = "TITLE"
     FIND_METHOD_PROCESS_AND_TITLE = "PROCESS_AND_TITLE"
 
+
     # --- Действия Camtasia ---
     ACTION_START = "start"
     ACTION_STOP = "stop"
@@ -312,18 +290,8 @@ class AppConfig:
     # --- Проекты ---
     PROJECT_MAPPING = {"QQPoker": PROJECT_QQ, "ClubGG": PROJECT_GG, "WUPoker": PROJECT_WU}
 
+
 AppConfig.DEBUG_MODE = True
-icon_path = os.path.join(os.path.dirname(sys.executable if getattr(sys, 'frozen', False) else __file__), AppConfig.ICON_PATH)
-if not os.path.exists(icon_path):
-    logging.warning(f"ICON NOT FOUND: {icon_path}")
-else:
-    logging.info(f"ICON OK: {icon_path}")
-
-try:
-    ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("OiHelper: v{AppConfig.CURRENT_VERSION}")
-except Exception:
-    pass
-
 
 class ColorPalette:
     BACKGROUND = "#F9FAFB"
@@ -405,19 +373,19 @@ PROJECT_CONFIGS = {
             AppConfig.KEY_WIDTH: 333,
             AppConfig.KEY_HEIGHT: 623,
             AppConfig.KEY_TOLERANCE: 0.07,
-            AppConfig.KEY_X: 1588,
-            AppConfig.KEY_Y: 105
+            AppConfig.KEY_X: 1580,
+            AppConfig.KEY_Y: 140
         },
         AppConfig.KEY_PLAYER: {
             AppConfig.KEY_WIDTH: 700,
-            AppConfig.KEY_HEIGHT: 115,
-            AppConfig.KEY_X: 1410,
+            AppConfig.KEY_HEIGHT: 365,
+            AppConfig.KEY_X: 1385,
             AppConfig.KEY_Y: 0
         },
         AppConfig.KEY_TABLE_SLOTS: [(-5, 0), (271, 423), (816, 0), (1086, 423)],
         AppConfig.KEY_EXCLUDED_TITLES: ["OiHelper", "NekoRay", "NekoBox", "Chrome", "Sandbo", "Notepad", "Explorer"],
         AppConfig.KEY_EXCLUDED_PROCESSES: ["explorer.exe", "svchost.exe", "cmd.exe", "powershell.exe", "Taskmgr.exe", "firefox.exe", "msedge.exe", "RuntimeBroker.exe", "ApplicationFrameHost.exe", "SystemSettings.exe", "NekoRay.exe", "nekobox.exe", "Sandbo.exe"],
-        AppConfig.KEY_SESSION_MAX_S: 5 * 3600,
+        AppConfig.KEY_SESSION_MAX_S: 4 * 3600,
         AppConfig.KEY_SESSION_WARN_S: 3.5 * 3600,
         AppConfig.KEY_ARRANGE_MINIMIZED: False,
         AppConfig.KEY_POPUPS: {
@@ -562,9 +530,6 @@ def focus_camtasia_window(max_retries=3, wait_launch=2.5, poll_interval=0.5):
       - разворачивает, активирует, логирует
       - повторяет max_retries раз
     """
-    hwnd = find_camtasia_window()
-    if hwnd:
-        move_camtasia_to_bottom_right(hwnd)
     for attempt in range(max_retries):
         hwnd = find_camtasia_window()
         if hwnd and win32gui.IsWindow(hwnd):
@@ -786,27 +751,6 @@ class InjectorMinimizer(QObject):
                 logging.warning(f"InjectorMinimizer: Не удалось найти или свернуть окно '{self.injector_title}' после {self.max_attempts} попыток.")
                 self.finished.emit(False)
 
-def move_camtasia_to_bottom_right(hwnd: int) -> bool:
-    if not hwnd or not win32gui.IsWindow(hwnd):
-        return False
-
-    screen_width  = win32api.GetSystemMetrics(0)
-    screen_height = win32api.GetSystemMetrics(1)
-
-    left, top, right, bottom = win32gui.GetWindowRect(hwnd)
-    win_width  = right - left
-    win_height = bottom - top
-
-    x = screen_width  - win_width
-    y = screen_height - win_height
-
-    # можно добавить SWP_NOACTIVATE, чтобы не воровать фокус
-    win32gui.SetWindowPos(
-        hwnd, win32con.HWND_TOPMOST,
-        x, y, win_width, win_height,
-        win32con.SWP_SHOWWINDOW  # | win32con.SWP_NOACTIVATE
-    )
-    return True
 
 
 class ToggleSwitch(QPushButton):
@@ -948,121 +892,6 @@ class NotificationManager(QObject):
             y = screen_geo.bottom() - height - margin - total_height
             n.move(x, y)
             total_height += height + 10
-
-class UptimeNagDialog(QWidget):
-    """Нельзя закрыть крестиком; мигает; заставляет обратить внимание."""
-    snoozed = pyqtSignal(int)   # минут
-    reboot_now = pyqtSignal()
-
-    def __init__(self, parent, uptime_days: float):
-        super().__init__(parent)
-        # Флаги окна: дочернее, поверх всех, без стандартных кнопок
-        self.setWindowFlags(
-            Qt.WindowType.Dialog
-            | Qt.WindowType.CustomizeWindowHint
-            | Qt.WindowType.WindowTitleHint
-            | Qt.WindowType.WindowStaysOnTopHint
-            | Qt.WindowType.Tool
-        )
-        self.setWindowModality(Qt.WindowModality.ApplicationModal)
-        self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
-
-        self._allow_close = False  # закрывать можно только через наши кнопки
-        self.setWindowTitle("Перезагрузите компьютер")
-
-        # Контент
-        root = QVBoxLayout(self)
-        root.setContentsMargins(16,16,16,16)
-
-        banner = QFrame()
-        banner.setObjectName("banner")
-        banner.setStyleSheet("""
-            QFrame#banner { background: #EF4444; border-radius: 8px; }
-            QLabel#bannerTitle { color: white; font-size: 16px; font-weight: 600; }
-        """)
-        bl = QVBoxLayout(banner)
-        title = QLabel("Компьютер не перезагружался более 5 дней")
-        title.setObjectName("bannerTitle")
-        bl.addWidget(title)
-        root.addWidget(banner)
-
-        info = QLabel(
-            f"Текущий аптайм: ~{uptime_days:.1f} дней.\n"
-            "Перезагрузка освободит ресурсы и уменьшит риск сбоев."
-        )
-        info.setStyleSheet("font-size: 13px; color: #1F2937;")
-        info.setWordWrap(True)
-        root.addWidget(info)
-
-        btns = QHBoxLayout()
-        btn_later = QPushButton("Напомнить позже")
-        btn_now = QPushButton("Перезагрузить сейчас")
-        btn_later.setStyleSheet(StyleSheet.get_button_style(primary=False))
-        btn_now.setStyleSheet(StyleSheet.get_button_style(primary=True))
-        btns.addWidget(btn_later, 1)
-        btns.addWidget(btn_now, 1)
-        root.addLayout(btns)
-
-        # Мигание баннера
-        self._blink_on = True
-        self._banner = banner
-        self._blink_timer = QTimer(self)
-        self._blink_timer.timeout.connect(self._toggle_blink)
-        self._blink_timer.start(AppConfig.UPTIME_NAG_BLINK_INTERVAL_MS)
-
-        # Сигналы
-        btn_later.clicked.connect(self._on_snooze)
-        btn_now.clicked.connect(self._on_reboot)
-
-        # Компактные размеры и позиционирование по центру родителя
-        self.setFixedWidth(420)
-        self.adjustSize()
-        self._center_on_active_screen()
-
-    def _center_on_active_screen(self):
-        # центр экрана, где сейчас курсор; если не нашли — primary
-        screen = QGuiApplication.screenAt(QCursor.pos()) or QGuiApplication.primaryScreen()
-        if not screen:
-            return
-        sg = screen.availableGeometry()
-        g = self.frameGeometry()
-        g.moveCenter(sg.center())
-        self.move(g.topLeft())
-
-    def _center_over_parent(self):
-        try:
-            parent = self.parentWidget() or self.window()
-            if parent:
-                pg = parent.frameGeometry()
-                g = self.frameGeometry()
-                g.moveCenter(pg.center())
-                self.move(g.topLeft())
-        except Exception:
-            pass
-
-    def _toggle_blink(self):
-        self._blink_on = not self._blink_on
-        color = "#EF4444" if self._blink_on else "#F59E0B"
-        self._banner.setStyleSheet(
-            f"QFrame#banner {{ background: {color}; border-radius: 8px; }}"
-            f"QLabel#bannerTitle {{ color: white; font-size: 16px; font-weight: 600; }}"
-        )
-
-    def _on_snooze(self):
-        self.snoozed.emit(AppConfig.UPTIME_NAG_SNOOZE_MIN)
-        self._allow_close = True
-        self.close()
-
-    def _on_reboot(self):
-        self.reboot_now.emit()
-        # Закрывать не обязательно; перезагрузка прервёт процесс.
-        # Но если что-то пойдёт не так — пусть окно не исчезает.
-
-    def closeEvent(self, event):
-        if self._allow_close:
-            return super().closeEvent(event)
-        event.ignore()  # блокируем X и Alt+F4
-
 
 class AnimatedProgressBar(QWidget):
     def __init__(self, parent=None):
@@ -1340,6 +1169,76 @@ class WindowManager(QObject):
                     pass
 
 
+    def double_robust_click(
+            self,
+            x: int,
+            y: int,
+            hwnd: int = None,
+            delay: float = AppConfig.ROBUST_CLICK_DELAY,
+            interval: float = AppConfig.DOUBLE_ROBUST_CLICK_INTERVAL,
+            log_prefix: str = ""
+        ) -> bool:
+        """Двойной клик с проверкой первого на успех и учётом системного интервала."""
+        try:
+            sys_dbl = ctypes.windll.user32.GetDoubleClickTime() / 1000.0
+        except Exception:
+            sys_dbl = interval
+        # кламп: не быстрее 50 мс и не медленнее системного
+        interval = max(0.05, min(interval, sys_dbl))
+
+        first = self.robust_click(x, y, hwnd=hwnd, delay=delay, log_prefix=log_prefix)
+        if not first:
+            return False
+        time.sleep(interval)
+        second = self.robust_click(x, y, hwnd=hwnd, delay=delay, log_prefix=log_prefix)
+        return bool(second)
+
+    # =============================
+    # High-level действия (используют robust_click)
+    # =============================
+    def humanized_click(self, x, y, hwnd=None, log_prefix="", restore_cursor=False):
+        tx, ty = x, y  # базовые координаты по умолчанию
+
+        if self.robust_click(x, y, hwnd=hwnd, log_prefix=log_prefix, restore_cursor=restore_cursor):
+            self.click_visual_request.emit(x, y)
+            return
+
+        logging.warning(f"{log_prefix} robust_click не удался. Использую резервный метод (pyautogui).")
+        try:
+            if not PYAUTOGUI_AVAILABLE:
+                self.log_request.emit("Резервный метод клика (pyautogui) недоступен.", "error")
+                return
+
+            if hwnd:
+                tx = min(max(x, self.vx), self.vx + self.vw - 1)
+                ty = min(max(y, self.vy), self.vy + self.vh - 1)
+                self._send_mouse_input(AppConfig.MOUSEEVENTF_MOVE | AppConfig.MOUSEEVENTF_ABSOLUTE, tx, ty)
+                time.sleep(AppConfig.SENDINPUT_MOVE_DELAY)
+
+                try:
+                    pt_hwnd = win32gui.WindowFromPoint((tx, ty))
+                    top = win32gui.GetAncestor(pt_hwnd, win32con.GA_ROOT)
+                except Exception:
+                    top = None
+
+                if top != hwnd:
+                    _force_foreground(hwnd, total_timeout=0.6, log_prefix=log_prefix)
+                    time.sleep(0.03)
+                    try:
+                        pt_hwnd = win32gui.WindowFromPoint((tx, ty))
+                        top = win32gui.GetAncestor(pt_hwnd, win32con.GA_ROOT)
+                    except Exception:
+                        top = None
+
+                    if top != hwnd:
+                        logging.error(f"{log_prefix} humanized_click: даже фолбэк-координата ({tx},{ty}) не принадлежит hwnd={hwnd}. Отменяю pyautogui.click.")
+                        return
+
+            pyautogui.click(tx, ty)
+            logging.info(f"{log_prefix} Выполнен резервный клик (pyautogui) по ({tx},{ty})")
+        except Exception as e:
+            logging.error(f"{log_prefix} Резервный клик (pyautogui) также не удался: {e}", exc_info=True)
+
     # =============================
     # OpenCV-шаблоны (без изменений, как у тебя)
     # =============================
@@ -1382,8 +1281,8 @@ class WindowManager(QObject):
             fs_coords = self.find_template(fs_path)
             if fs_coords:
                 self.log_request.emit("Нашёл кнопку Fullscreen. Жму...", "info")
-                ok = self.robust_click(fs_coords[0], fs_coords[1], hwnd=hwnd)
-                logging.info(f"[Camtasia] Robust click on fullscreen at {fs_coords}, ok={ok}")
+                ok = self.double_robust_click(fs_coords[0], fs_coords[1], hwnd=hwnd)
+                logging.info(f"[Camtasia] Double click on fullscreen at {fs_coords}, ok={ok}")
                 time.sleep(AppConfig.ROBUST_CLICK_DELAY)
                 return ok
             else:
@@ -1815,13 +1714,6 @@ class MainWindow(QMainWindow):
         self.init_timers()
         self.init_startup_checks()
 
-        self._uptime_nag_dialog = None
-        self._uptime_snoozed_until = 0.0  # monotonic seconds
-        self._uptime_kill_done = False
-        self.setWindowIcon(QIcon(icon_path))
-
-
-
 
     def closeEvent(self, event):
         logging.info("Приложение закрывается, остановка таймеров...")
@@ -1829,111 +1721,6 @@ class MainWindow(QMainWindow):
             timer.stop()
         self._executor.shutdown(wait=False) #! ДОБАВЛЕНО: Корректное завершение пула потоков
         super().closeEvent(event)
-
-    def _enum_windows_for_pid(self, pid: int) -> list[int]:
-        hwnds = []
-        def cb(hwnd, _):
-            try:
-                if win32gui.IsWindow(hwnd) and win32gui.IsWindowVisible(hwnd):
-                    _, wpid = win32process.GetWindowThreadProcessId(hwnd)
-                    if wpid == pid:
-                        hwnds.append(hwnd)
-            except Exception:
-                pass
-        try:
-            win32gui.EnumWindows(cb, None)
-        except Exception:
-            pass
-        return hwnds
-
-    def close_processes_by_names(self, names: list[str]) -> dict:
-        """
-        Закрывает процессы с именами из списка.
-        1) Пытается мягко (WM_CLOSE) если есть окна,
-        2) ждёт grace, затем terminate/kill (если разрешено).
-        Возвращает статистику по действиям.
-        """
-        stats = {"matched": 0, "soft_closed": 0, "terminated": 0, "killed": 0, "errors": 0}
-        if not names:
-            return stats
-        targets = {n.lower() for n in names}
-
-        if not PSUTIL_AVAILABLE:
-            self.log("psutil не установлен: пропускаю закрытие процессов", "warning")
-            return stats
-
-        try:
-            victims = []
-            for p in psutil.process_iter(["pid", "name"]):
-                try:
-                    if (nm := p.info.get("name")) and nm.lower() in targets:
-                        victims.append(p)
-                except (psutil.NoSuchProcess, psutil.AccessDenied):
-                    continue
-
-            stats["matched"] = len(victims)
-            if not victims:
-                return stats
-
-            # 1) мягкое закрытие (для оконных приложений)
-            for p in victims:
-                try:
-                    self._soft_close_pid_windows(p.pid)
-                    stats["soft_closed"] += 1
-                except Exception:
-                    stats["errors"] += 1
-
-            # 2) ждём grace
-            if AppConfig.PROCESS_CLOSE_GRACE_MS > 0:
-                QThread.msleep(AppConfig.PROCESS_CLOSE_GRACE_MS)  # в GUI-потоке лучше не спать долго; ok, т.к. диалог модальный
-                # Если хочешь не блокировать UI — переделаем на QTimer.singleShot цепочкой.
-
-            # 3) terminate/kill оставшихся
-            for p in victims:
-                try:
-                    if not p.is_running():
-                        continue
-                    p.terminate()
-                    stats["terminated"] += 1
-                except (psutil.NoSuchProcess, psutil.AccessDenied):
-                    continue
-                except Exception:
-                    stats["errors"] += 1
-
-            if AppConfig.PROCESS_KILL_FORCE:
-                # ещё чуть подождём и, если живы — kill
-                try:
-                    psutil.wait_procs(victims, timeout=1.5)
-                except Exception:
-                    pass
-                for p in victims:
-                    try:
-                        if p.is_running():
-                            p.kill()
-                            stats["killed"] += 1
-                    except (psutil.NoSuchProcess, psutil.AccessDenied):
-                        continue
-                    except Exception:
-                        stats["errors"] += 1
-
-        except Exception as e:
-            self.log(f"Ошибка при закрытии процессов: {e}", "error")
-            stats["errors"] += 1
-
-        self.log(f"Закрытие процессов: {stats}", "info")
-        return stats
-
-
-    def _soft_close_pid_windows(self, pid: int):
-        try:
-            for hwnd in self._enum_windows_for_pid(pid):
-                try:
-                    win32gui.PostMessage(hwnd, win32con.WM_CLOSE, 0, 0)
-                except Exception:
-                    pass
-        except Exception:
-            pass
-
 
     def get_current_screen(self):
         try:
@@ -1967,9 +1754,6 @@ class MainWindow(QMainWindow):
                 self.timers["popup_check"].start(AppConfig.POPUP_CHECK_INTERVAL_FAST)
             elif new_project_name == AppConfig.PROJECT_GG:
                 self.position_gg_panel()
-                hwnd = find_camtasia_window()
-                if hwnd:
-                    move_camtasia_to_bottom_right(hwnd)
                 QTimer.singleShot(AppConfig.INJECTOR_MINIMIZE_DELAY, self.injector_minimizer.start)
                 self.timers["popup_check"].start(AppConfig.POPUP_CHECK_INTERVAL_FAST)
 
@@ -2299,8 +2083,7 @@ class MainWindow(QMainWindow):
             "player_check": QTimer(self), "recorder_check": QTimer(self),
             "auto_record": QTimer(self), "auto_arrange": QTimer(self),
             "session": QTimer(self), "player_start": QTimer(self),
-            "record_cooldown": QTimer(self), "popup_check": QTimer(self),
-            "uptime_check": QTimer(self),
+            "record_cooldown": QTimer(self), "popup_check": QTimer(self)
         }
         self.timers["player_check"].timeout.connect(self.check_for_player)
         self.timers["recorder_check"].timeout.connect(self.check_for_recorder)
@@ -2311,7 +2094,6 @@ class MainWindow(QMainWindow):
         self.timers["record_cooldown"].setSingleShot(True)
         self.timers["record_cooldown"].timeout.connect(lambda: setattr(self, 'is_record_stopping', False))
         self.timers["popup_check"].timeout.connect(self.check_for_popups)
-        self.timers["uptime_check"].timeout.connect(self.check_system_uptime)
 
     def init_startup_checks(self):
         self.update_window_title()
@@ -2334,7 +2116,6 @@ class MainWindow(QMainWindow):
         if AppConfig.TELEGRAM_REPORT_LEVEL == 'all':
             self.telegram_notifier.send_message(AppConfig.MSG_TG_HELPER_STARTED)
         self.check_system_uptime()
-        self.timers["uptime_check"].start(AppConfig.UPTIME_NAG_CHECK_INTERVAL_MS)
         self.check_admin_rights()
 
     def check_for_player(self):
@@ -2383,56 +2164,9 @@ class MainWindow(QMainWindow):
         try:
             uptime_days = ctypes.windll.kernel32.GetTickCount64() / (1000 * 60 * 60 * 24)
             if uptime_days > AppConfig.UPTIME_WARN_DAYS:
-                now = time.monotonic()
-                if now < self._uptime_snoozed_until:
-                    return  # ещё действует «напомнить позже»
-                # уведомление в трей-стиле оставим как было
                 self.log(AppConfig.MSG_UPTIME_WARNING, "warning")
-
-                # показать/актуализировать окно-наг
-                if self._uptime_nag_dialog is None:
-                    self._uptime_nag_dialog = UptimeNagDialog(self, uptime_days)
-                    self._uptime_nag_dialog.snoozed.connect(self._on_uptime_snoozed)
-                    self._uptime_nag_dialog.reboot_now.connect(self._on_uptime_reboot_now)
-
-                # обновим текст аптайма при повторных вызовах (если окно уже создано)
-                if self._uptime_nag_dialog and not self._uptime_nag_dialog.isVisible():
-                    # пересоздавать не нужно; просто показать и центрировать
-                    self._uptime_nag_dialog.show()
-                elif self._uptime_nag_dialog:
-                    self._uptime_nag_dialog.raise_()
-                    self._uptime_nag_dialog.activateWindow()
-            # если аптайм снова < порога — можно позже обнулить окно при желании
-
-
         except Exception as e:
             logging.error("Не удалось проверить время работы системы", exc_info=True)
-
-    def _on_uptime_snoozed(self, minutes: int):
-        self._uptime_snoozed_until = time.monotonic() + minutes * 60
-        self._uptime_kill_done = False
-        if self._uptime_nag_dialog:
-            self._uptime_nag_dialog.deleteLater()
-            self._uptime_nag_dialog = None
-
-    def _on_uptime_reboot_now(self):
-        try:
-            # чтобы не дергали повторно
-            if getattr(self, "_reboot_initiated", False):
-                return
-            self._reboot_initiated = True
-            self._uptime_kill_done = True
-
-            # 1) закрываем процессы «мягко → подождать → terminate/kill»
-            if AppConfig.PROCESSES_TO_CLOSE:
-                self.log("Закрываю процессы перед перезагрузкой...", "info")
-                self.close_processes_by_names(AppConfig.PROCESSES_TO_CLOSE)
-
-            # 2) небольшая пауза (дать ОС «устаканиться») — 2 с
-            QTimer.singleShot(getattr(AppConfig, "REBOOT_EXTRA_WAIT_MS", 2000),
-                            lambda: subprocess.run(["shutdown", "/r", "/t", "0"], check=False))
-        except Exception as e:
-            self.log(f"Не удалось инициировать перезагрузку: {e}", "error")
 
     def handle_player_close(self):
         if not self.is_automation_enabled: return
@@ -2880,6 +2614,7 @@ class MainWindow(QMainWindow):
         self.position_player_window(config)
         if self.current_project == AppConfig.PROJECT_GG:
             QTimer.singleShot(AppConfig.INJECTOR_MINIMIZE_DELAY, self.injector_minimizer.start)
+        self.position_recorder_window()
         if self.current_project == AppConfig.PROJECT_GG:
             self.position_lobby_window(config)
         elif self.current_project == AppConfig.PROJECT_QQ:
@@ -3156,7 +2891,6 @@ def global_exception_hook(exctype, value, traceback):
 # ===================================================================
 if __name__ == '__main__':
     instance = SingleInstance(AppConfig.MUTEX_NAME)
-
     if instance.is_already_running():
         # Вместо тихого выхода, можно показать сообщение
         ctypes.windll.user32.MessageBoxW(0, "OiHelper уже запущен.", "OiHelper", 0x40 | 0x10)
@@ -3169,8 +2903,6 @@ if __name__ == '__main__':
     app = QApplication(sys.argv)
     splash = SplashScreen()
     splash.show()
-
-    app.setWindowIcon(QIcon(icon_path))
 
     def on_update_progress(value, stage):
         splash.set_progress(value, stage)
