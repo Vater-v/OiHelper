@@ -1,7 +1,6 @@
 import sys
 import win32gui
 import win32api
-import win32con
 import win32process
 import requests
 import threading
@@ -21,6 +20,7 @@ from concurrent.futures import ThreadPoolExecutor
 from PyQt6.QtCore import QMetaObject
 import logging.handlers
 from PyQt6.QtGui import QGuiApplication, QCursor
+from PyQt6.QtCore import QEvent
 
 # Попытка импортировать опциональные библиотеки и установить флаги доступности
 try:
@@ -55,10 +55,20 @@ except ImportError:
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QPushButton, QLabel,
     QGridLayout, QHBoxLayout, QFrame, QSizePolicy, QGraphicsDropShadowEffect,
-    QComboBox, QProgressBar, QMessageBox
+    QComboBox, QProgressBar, QMessageBox, QToolButton
 )
-from PyQt6.QtCore import QObject, QTimer, pyqtSignal, Qt, QPropertyAnimation, QRect, QEasingCurve, pyqtProperty, QThread
-from PyQt6.QtGui import QIcon, QColor, QFont, QPainter, QBrush, QPen
+
+# PyQt6
+from PyQt6.QtCore import Qt, QObject, QPoint, QRect, QEvent
+from PyQt6.QtGui import QPixmap, QIcon, QColor, QCursor
+from PyQt6.QtWidgets import (
+    QWidget, QMainWindow, QLabel, QToolButton, QSizePolicy,
+    QHBoxLayout, QVBoxLayout, QFrame, QGraphicsDropShadowEffect
+)
+
+
+from PyQt6.QtCore import QObject, QTimer, pyqtSignal, Qt, QPropertyAnimation, QRect, QEasingCurve, pyqtProperty, QThread, QSettings 
+from PyQt6.QtGui import QIcon, QColor, QFont, QPainter, QBrush, QPen, QPixmap
 from PyQt6.QtSvg import QSvgRenderer
 
 _user32 = ctypes.windll.user32
@@ -93,7 +103,7 @@ class AppConfig:
     """Централизованная конфигурация приложения с ускоренными задержками."""
     # --- Общие настройки приложения ---
     DEBUG_MODE = False
-    CURRENT_VERSION = "7.32"
+    CURRENT_VERSION = "8.20"
     MUTEX_NAME = "OiHelperMutex"
     APP_TITLE_TEMPLATE = "OiHelper v{version}"
     ICON_PATH = 'icon.ico'
@@ -142,8 +152,8 @@ class AppConfig:
     PLAYER_CHECK_INTERVAL = 250                 # Было: 700
     PLAYER_AUTOSTART_INTERVAL = 200             # Было: 500
     AUTO_RECORD_INTERVAL = 250                  # Было: 600
-    AUTO_ARRANGE_INTERVAL = 300                 # Было: 800
-    RECORDER_CHECK_INTERVAL = 300               # Было: 800
+    AUTO_ARRANGE_INTERVAL = 450                 # Было: 800
+    RECORDER_CHECK_INTERVAL = 250               # Было: 800
     POPUP_CHECK_INTERVAL_FAST = 200             # Было: 750
     POPUP_CHECK_INTERVAL_SLOW = 3000            # Было: 10000
     POPUP_FAST_SCAN_DURATION_S = 60             # Было: 120
@@ -161,21 +171,35 @@ class AppConfig:
     LOG_WAIT_RETRY_INTERVAL = 1000              # Было: 3000
     LAUNCHER_WINDOW_ACTIVATION_TIMEOUT = 2000   # Было: 5000
     OPENCV_LAUNCH_ARRANGE_DELAY = 400           # Было: 1000
-    TABLE_ARRANGE_ON_CHANGE_DELAY = 200         # Было: 500
-    INJECTOR_MINIMIZE_DELAY = 400               # Было: 1000
+    TABLE_ARRANGE_ON_CHANGE_DELAY = 350         # Было: 500
+    INJECTOR_MINIMIZE_DELAY = 350               # Было: 1000
     SESSION_LIMIT_HANDLER_DELAY = 50            # Было: 100
     AUTO_STOP_RECORD_INACTIVITY_S = 300         # Было: 300 (2 минуты)
+    CLOSE_TABLES_STEP_DELAY_MS = 330
+
+    # --- Автоэмодзи: интервалы и сканирование ---
+    EMOJI_RANGES_MINUTES = {
+        # 1 клик в случайный интервал на ОДИН стол
+        # далее будем делить на фактическое число столов
+        "QQ": (1, 31),
+        "GG": (1, 43),
+    }
+    EMOJI_CHECK_INTERVAL_MS = 1000       # раз в секунду проверяем, “пришло ли время”
+    EMOJI_SCAN_SLEEP_MS = 750            # пауза между попытками найти эмодзи при ожидании
+    EMOJI_LOG_PREFIX = "[emoji]"
+
+
 
     # --- Размеры и расположение UI ---
     DEFAULT_WIDTH = 350
-    DEFAULT_HEIGHT = 250
-    GG_UI_WIDTH = 850
-    GG_UI_HEIGHT = 100
+    DEFAULT_HEIGHT = 400
+    GG_UI_WIDTH = 900
+    GG_UI_HEIGHT = 195
     WINDOW_MARGIN = 0
     CLICK_INDICATOR_SIZE = 45
     CLICK_INDICATOR_DURATION = 350              # Было: 250
-    SPLASH_WIDTH = 300
-    SPLASH_HEIGHT = 100
+    SPLASH_WIDTH = 600
+    SPLASH_HEIGHT = 450
     SPLASH_PROGRESS_HEIGHT = 10
     NOTIFICATION_WIDTH = 420
     NOTIFICATION_MAX_COUNT = 5
@@ -183,8 +207,8 @@ class AppConfig:
     PROGRESS_BAR_HEIGHT = 6
     PROGRESS_BAR_ANIMATION_DURATION = 500       # Было: 1000
     PROGRESS_BAR_ALERT_BLINK_INTERVAL = 400     # Было: 400
-    TOGGLE_SWITCH_WIDTH = 40
-    TOGGLE_SWITCH_HEIGHT = 22
+    TOGGLE_SWITCH_WIDTH = 36
+    TOGGLE_SWITCH_HEIGHT = 18
     TOGGLE_ANIMATION_DURATION = 200             # Было: 200
     RECORDER_FIXED_WIDTH = 410
     RECORDER_FIXED_HEIGHT = 105
@@ -203,7 +227,7 @@ class AppConfig:
     SPLASH_MSG_ERROR = "Ошибка"
     LOBBY_MSG_UPDATE_CHECK = "Проверка обновлений..."
     LOBBY_MSG_SEARCHING = "Поиск проекта..."
-    LOBBY_MSG_PLAYER_NOT_FOUND = "Плеер не найден. Запустите его."
+    LOBBY_MSG_PLAYER_NOT_FOUND = "Подождите, запускаюсь..."
     LOBBY_MSG_WAITING_FOR_LAUNCHER = "Ожидание старта в лаунчере..."
     LOBBY_MSG_MANUAL_SELECT_PROMPT = "или выберите вручную:"
     LOBBY_MSG_COMBO_PLACEHOLDER = "Выберите проект..."
@@ -229,6 +253,7 @@ class AppConfig:
     MSG_POPUP_CLOSER_OFF = "Автозакрытие спама (beta) выключено."
     MSG_TG_HELPER_STARTED = f"OiHelper {CURRENT_VERSION} запущен."
     MSG_TG_CRITICAL_ERROR = "OiHelper Критическая ошибка: {}"
+    MSG_SITOUT_ALL = "Ситаут везде"
 
     # --- Системные и WinAPI константы ---
     ERROR_ALREADY_EXISTS = 183
@@ -255,9 +280,15 @@ class AppConfig:
     CAMTASIA_MAX_ACTION_ATTEMPTS = 6
     CAMTASIA_RESUME_CHECK_ATTEMPTS = 6
     CAMTASIA_RESUME_CHECK_INTERVAL = 150      # Было: 400
-    DEFAULT_CV_CONFIDENCE = 0.73
+    DEFAULT_CV_CONFIDENCE = 0.87
     POPUP_ACTION_DELAY = 0.2                  # Было: 0.5
     BONUS_SPIN_WAIT_S = 1                     # Было: 4
+    # Ситаут: настройки поиска/клика
+    SITOUT_CONFIDENCE = 0.87          # порог матчинга, как DEFAULT_CV_CONFIDENCE
+    SITOUT_CLICK_DELAY_MS = 375     # задержка между кликами по найденным кнопкам
+    SITOUT_DIR_NAME = "sitout"        # templates/GG/sitout/*.png (и fallback: sitout*.png в корне проекта)
+    SITOUT_COOLDOWN_S = 2   # антиспам: повтор не чаще, чем раз в 12 секунд
+
 
     # --- Пути к файлам и ключевые слова ---
     LOG_SENDER_KEYWORDS = ["endsess", "logbot"]
@@ -313,14 +344,41 @@ class AppConfig:
     PROJECT_MAPPING = {"QQPoker": PROJECT_QQ, "ClubGG": PROJECT_GG, "WUPoker": PROJECT_WU}
 
 AppConfig.DEBUG_MODE = True
-icon_path = os.path.join(os.path.dirname(sys.executable if getattr(sys, 'frozen', False) else __file__), AppConfig.ICON_PATH)
-if not os.path.exists(icon_path):
-    logging.warning(f"ICON NOT FOUND: {icon_path}")
-else:
-    logging.info(f"ICON OK: {icon_path}")
+# ---- РЕЗОЛВЕР РЕСУРСОВ (иконки/картинки) ----
+def resolve_resource(*rel_parts) -> str:
+    bases = []
+    if getattr(sys, 'frozen', False):
+        bases.append(os.path.dirname(sys.executable))
+    meipass = getattr(sys, '_MEIPASS', None)
+    if meipass:
+        bases.append(meipass)
+    bases.append(os.path.dirname(os.path.abspath(__file__)))
+    bases.append(os.getcwd())
+
+    candidates = []
+    rp = os.path.join(*rel_parts)
+    for b in bases:
+        candidates.append(os.path.join(b, rp))
+    # Доп. вариант: .assets/...
+    if rel_parts and rel_parts[0] not in ('.assets',):
+        candidates += [os.path.join(b, '.assets', *rel_parts[1:] if rel_parts[0] in ('assets', '.assets') else rel_parts)
+                       for b in bases]
+
+    for p in candidates:
+        if os.path.exists(p):
+            return p
+    return rp  # вернём относительный как последний вариант
+
+# Ищем иконку в assets/.assets/возле exe/MEIPASS/скрипта/тек.папки
+AppConfig.ICON_PATH = os.path.join('assets', 'icon.ico')  # логическое расположение
+icon_path = resolve_resource('assets', 'icon.ico')
+logging.info(f"ICON PATH resolved to: {icon_path if os.path.exists(icon_path) else 'NOT FOUND'}")
+
 
 try:
-    ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("OiHelper: v{AppConfig.CURRENT_VERSION}")
+    ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
+    f"OiHelper v{AppConfig.CURRENT_VERSION}"
+)
 except Exception:
     pass
 
@@ -349,11 +407,17 @@ class StyleSheet:
     FONT_FAMILY = "'Segoe UI', 'Roboto'"
     FONT_FAMILY_SEMIBOLD = "'Segoe UI Semibold', 'Roboto'"
 
-    MAIN_WINDOW = f"background-color: {ColorPalette.BACKGROUND};"
+    MAIN_WINDOW = "background: transparent;"
     SPLASH_LABEL = f"font-family: {FONT_FAMILY}; font-size: 14px; color: {ColorPalette.TEXT_SECONDARY};"
     LOBBY_LABEL = f"font-family: {FONT_FAMILY}; font-size: 14px; color: {ColorPalette.TEXT_SECONDARY};"
     STATUS_LABEL = f"font-family: {FONT_FAMILY_SEMIBOLD}; font-size: 13px; color: {ColorPalette.TEXT_PRIMARY};"
     PROGRESS_BAR_LABEL = f"font-family: {FONT_FAMILY}; font-size: 11px; color: {ColorPalette.TEXT_SECONDARY};"
+    SPLASH_TITLE = f"font-family: {FONT_FAMILY_SEMIBOLD}; font-size: 20px; color: {ColorPalette.TEXT_PRIMARY};"
+    CLOSE_BTN_STYLE = (
+        "QToolButton { border: none; font-size: 21px; color: #6B7280; }"
+        "QToolButton:hover { color: #EF4444; }"
+    )
+
     COMBO_BOX = f"""
         QComboBox {{
             font-family: {FONT_FAMILY};
@@ -386,11 +450,225 @@ class StyleSheet:
 
     @staticmethod
     def get_button_style(primary=True):
-        base_style = f"QPushButton {{ font-family: {StyleSheet.FONT_FAMILY_SEMIBOLD}; font-size: 12px; border-radius: 6px; padding: 8px 12px; }}"
+        base_style = f"QPushButton {{ font-family: {StyleSheet.FONT_FAMILY_SEMIBOLD}; font-size: 11px; border-radius: 6px; padding: 6px 10px; }}"
         if primary:
             return base_style + f"QPushButton {{ background-color: {ColorPalette.PRIMARY}; color: {ColorPalette.WHITE}; border: none; }} QPushButton:hover {{ background-color: {ColorPalette.PRIMARY_HOVER}; }} QPushButton:pressed {{ background-color: {ColorPalette.PRIMARY_PRESSED}; }} QPushButton:disabled {{ background-color: {ColorPalette.SECONDARY}; color: {ColorPalette.TEXT_SECONDARY}; }}"
         else:
             return base_style + f"QPushButton {{ background-color: {ColorPalette.SURFACE}; color: {ColorPalette.TEXT_PRIMARY}; border: 1px solid {ColorPalette.BORDER}; }} QPushButton:hover {{ background-color: {ColorPalette.BACKGROUND}; }} QPushButton:pressed {{ background-color: {ColorPalette.SECONDARY}; }} QPushButton:disabled {{ background-color: {ColorPalette.BACKGROUND}; color: {ColorPalette.TEXT_SECONDARY}; border-color: {ColorPalette.SECONDARY}; }}"
+
+class CustomTitleBar(QWidget):
+    """Кастомная шапка: слева аватар, рядом заголовок, справа кнопки управления."""
+    def __init__(self, parent, title_text: str, icon_path: str, show_min=False, show_max=False):
+        super().__init__(parent)
+        self._parent = parent
+        self._drag_pos = None
+
+        self.setFixedHeight(36)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.setStyleSheet("""
+            QWidget {
+                background: #FFFFFF;
+                border-top-left-radius: 10px;
+                border-top-right-radius: 10px;
+            }
+            QLabel#title {
+                color: #1F2937; font-family: 'Segoe UI Semibold';
+                font-size: 15px;
+            }
+            QToolButton {
+                border: none; font-size: 18px; padding: 0 8px; color: #6B7280;
+            }
+            QToolButton:hover { color: #111827; }
+            QToolButton#close:hover { color: #EF4444; }
+        """)
+
+        root = QHBoxLayout(self)
+        root.setContentsMargins(10, 4, 6, 4)
+        root.setSpacing(6)
+
+        # Аватар
+        avatar = QLabel()
+        avatar.setFixedSize(22, 22)
+        pix = QPixmap(icon_path) if os.path.exists(icon_path) else QPixmap()
+        if not pix.isNull():
+            avatar.setPixmap(pix.scaled(22, 22, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
+        root.addWidget(avatar)
+
+        # Заголовок
+        self._title = QLabel(title_text)
+        self._title.setObjectName("title")
+        self._title.setAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft)
+        root.addWidget(self._title, 1)
+
+        # Кнопки
+        btns = QHBoxLayout()
+        btns.setContentsMargins(0,0,0,0); btns.setSpacing(0)
+
+        if show_min:
+            self._btn_min = QToolButton(self); self._btn_min.setText("—")
+            self._btn_min.clicked.connect(self._parent.showMinimized)
+            btns.addWidget(self._btn_min)
+
+        if show_max:
+            self._btn_max = QToolButton(self); self._btn_max.setText("▢")
+            self._btn_max.clicked.connect(self._toggle_max_restore)
+            btns.addWidget(self._btn_max)
+
+        self._btn_close = QToolButton(self)
+        self._btn_close.setObjectName("close")
+        self._btn_close.setText("✕")
+        self._btn_close.clicked.connect(self._parent.close)
+        btns.addWidget(self._btn_close)
+
+        btns_w = QWidget(); btns_w.setLayout(btns)
+        root.addWidget(btns_w)
+
+    def set_title(self, text: str):
+        self._title.setText(text)
+
+    # Перетаскивание окна за шапку
+    def mousePressEvent(self, e):
+        if e.button() == Qt.MouseButton.LeftButton:
+            self._drag_pos = e.globalPosition().toPoint() - self._parent.frameGeometry().topLeft()
+            e.accept()
+
+    def mouseMoveEvent(self, e):
+        if e.buttons() & Qt.MouseButton.LeftButton and self._drag_pos is not None:
+            self._parent.move(e.globalPosition().toPoint() - self._drag_pos)
+            e.accept()
+
+    def mouseReleaseEvent(self, e):
+        self._drag_pos = None
+        e.accept()
+
+    def _toggle_max_restore(self):
+        if self._parent.isMaximized():
+            self._parent.showNormal()
+        else:
+            self._parent.showMaximized()
+
+
+class FramelessHelper(QObject):
+    """Добавляет безрамочность, тень и resize-зоны к любому QMainWindow/QWidget."""
+    BORDER = 6  # толщина зоны resize
+
+    def __init__(self, window: QWidget, rounded=True):
+        super().__init__(window)
+        self.w = window
+        self._resizing = False
+        self._edge = None
+        self._press_pos = None
+        self._start_geom = None
+        self.rounded = rounded
+
+        # Безрамочно + поверх (поведение как у тебя)
+        self.w.setWindowFlags(
+            (self.w.windowFlags() | Qt.WindowType.WindowStaysOnTopHint) &
+            ~Qt.WindowType.WindowTitleHint | Qt.WindowType.FramelessWindowHint
+        )
+        self.w.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+
+        # Корневой контейнер с тенью и скруглением
+        self._container = QFrame()
+        self._container.setObjectName("chromeContainer")
+        self._container.setStyleSheet("""
+            QFrame#chromeContainer {
+                background: #FFFFFF;
+                %s
+            }
+        """ % ("border-radius: 10px;" if self.rounded else "border-radius: 0;"))
+
+        shadow = QGraphicsDropShadowEffect(self._container)
+        shadow.setBlurRadius(20)
+        shadow.setColor(QColor(0,0,0,90))
+        shadow.setOffset(0, 4)
+        self._container.setGraphicsEffect(shadow)
+
+        self._outer = QVBoxLayout()
+        self._outer.setContentsMargins(10,10,10,10)
+        self._outer.addWidget(self._container)
+        host = QWidget(); host.setLayout(self._outer)
+        host.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        host.setStyleSheet("background: transparent;")
+        self.w.setCentralWidget(host) if isinstance(self.w, QMainWindow) else self.w.setLayout(self._outer)
+
+        # Внутри контейнера: шапка + зона контента
+        self.v = QVBoxLayout(self._container)
+        self.v.setContentsMargins(0,0,0,0)
+        self.v.setSpacing(0)
+
+        self.titlebar = None
+        self.content_host = QFrame()
+        self.content_host.setObjectName("contentHost")
+        self.content_layout = QVBoxLayout(self.content_host)
+        self.content_layout.setContentsMargins(12,12,12,12)
+        self.content_layout.setSpacing(10)
+
+        # По умолчанию пока без шапки — добавим отдельно
+        self.v.addWidget(self.content_host, 1)
+
+        # Подписываемся на мышь у окна для resize
+        self.w.installEventFilter(self)
+
+    def add_titlebar(self, titlebar: CustomTitleBar):
+        if self.titlebar:
+            self.v.removeWidget(self.titlebar); self.titlebar.deleteLater()
+        self.titlebar = titlebar
+        self.v.insertWidget(0, self.titlebar)
+
+    # ====== Resize по краям ======
+    def _hit_test(self, pos: QPoint):
+        x, y = pos.x(), pos.y()
+        w, h = self.w.width(), self.w.height()
+        b = self.BORDER
+        left, right, top, bottom = x < b, x > w - b, y < b, y > h - b
+        return (left, right, top, bottom)
+
+    def eventFilter(self, obj, ev):
+        if ev.type() == QEvent.Type.MouseMove and self.w.isWindow():
+            self._update_cursor(ev.position().toPoint())
+            if self._resizing:
+                self._do_resize(ev.globalPosition().toPoint())
+            return False
+        elif ev.type() == QEvent.Type.MouseButtonPress and ev.button() == Qt.MouseButton.LeftButton:
+            self._begin_resize(ev.position().toPoint())
+            return False
+        elif ev.type() == QEvent.Type.MouseButtonRelease:
+            self._resizing = False; self._edge = None
+            return False
+        return False
+
+    def _update_cursor(self, pos: QPoint):
+        l,r,t,b = self._hit_test(pos)
+        if (l and t) or (r and b): self.w.setCursor(Qt.CursorShape.SizeFDiagCursor)
+        elif (r and t) or (l and b): self.w.setCursor(Qt.CursorShape.SizeBDiagCursor)
+        elif l or r: self.w.setCursor(Qt.CursorShape.SizeHorCursor)
+        elif t or b: self.w.setCursor(Qt.CursorShape.SizeVerCursor)
+        else: self.w.unsetCursor()
+
+    def _begin_resize(self, pos: QPoint):
+        l,r,t,b = self._hit_test(pos)
+        if l or r or t or b:
+            self._resizing = True
+            self._edge = (l,r,t,b)
+            self._press_pos = QCursor.pos()
+            self._start_geom = self.w.geometry()
+
+    def _do_resize(self, gpos: QPoint):
+        if not self._resizing or not self._start_geom: return
+        dx = gpos.x() - self._press_pos.x()
+        dy = gpos.y() - self._press_pos.y()
+        g = QRect(self._start_geom)
+        l,r,t,b = self._edge
+        if l: g.setLeft(g.left() + dx)
+        if r: g.setRight(g.right() + dx)
+        if t: g.setTop(g.top() + dy)
+        if b: g.setBottom(g.bottom() + dy)
+        # Минимальные размеры по месту
+        g.setWidth(max(300, g.width()))
+        g.setHeight(max(120, g.height()))
+        self.w.setGeometry(g)
+
 
 PROJECT_CONFIGS = {
     AppConfig.PROJECT_GG: {
@@ -406,7 +684,7 @@ PROJECT_CONFIGS = {
             AppConfig.KEY_HEIGHT: 623,
             AppConfig.KEY_TOLERANCE: 0.07,
             AppConfig.KEY_X: 1588,
-            AppConfig.KEY_Y: 105
+            AppConfig.KEY_Y: 108
         },
         AppConfig.KEY_PLAYER: {
             AppConfig.KEY_WIDTH: 700,
@@ -482,50 +760,151 @@ PROJECT_CONFIGS = {
 class SplashScreen(QWidget):
     def __init__(self):
         super().__init__()
-        self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint)
+        # Безрамочный, поверх всех, без «виндовс-окна»
+        self.setWindowFlags(
+            Qt.WindowType.FramelessWindowHint
+            | Qt.WindowType.WindowStaysOnTopHint
+            | Qt.WindowType.Tool
+        )
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setFixedSize(AppConfig.SPLASH_WIDTH, AppConfig.SPLASH_HEIGHT)
 
-        container = QFrame(self)
-        container.setStyleSheet(f"background-color: {ColorPalette.SURFACE}; border-radius: 8px;")
-        shadow = QGraphicsDropShadowEffect()
-        shadow.setBlurRadius(20)
-        shadow.setColor(QColor(ColorPalette.BLACK))
-        shadow.setOffset(0, 4)
-        container.setGraphicsEffect(shadow)
+        # Внешний контейнер с тенью
+        root = QVBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
 
-        main_layout = QVBoxLayout(self)
-        main_layout.addWidget(container)
+        container = QFrame()
+        container.setObjectName("container")
+        container.setStyleSheet("QFrame#container { background: #FFFFFF; border-radius: 10px; }")
+        shadow = QGraphicsDropShadowEffect()
+        shadow.setBlurRadius(20); shadow.setColor(QColor(0, 0, 0, 90)); shadow.setOffset(0, 4)
+        container.setGraphicsEffect(shadow)
+        root.addWidget(container)
 
         layout = QVBoxLayout(container)
-        layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.setContentsMargins(16, 12, 16, 16)
+        layout.setSpacing(10)
 
+        # Заголовок слева, крестик справа
+        header = QHBoxLayout()
+        header.setContentsMargins(0, 0, 0, 0)
+        title = QLabel("OiHelper")
+        title.setStyleSheet(StyleSheet.SPLASH_TITLE)
+        header.addWidget(title, 0, Qt.AlignmentFlag.AlignLeft)
+
+        header.addStretch(1)
+
+        close_btn = QToolButton()
+        close_btn.setText("✕")
+        close_btn.setToolTip("Закрыть")
+        close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        close_btn.setStyleSheet(StyleSheet.CLOSE_BTN_STYLE)
+        close_btn.clicked.connect(QApplication.instance().quit)
+        header.addWidget(close_btn, 0, Qt.AlignmentFlag.AlignRight)
+        layout.addLayout(header)
+
+        # Картинка по центру
+        self.image_label = QLabel()
+        self.image_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.image_label.setScaledContents(True)               # масштабировать под рамку
+        self.image_label.setMaximumSize(264, 264)              # максимум
+        self._set_image()
+
+        # создаём контейнер с горизонтальным выравниванием
+        image_container = QHBoxLayout()
+        image_container.addStretch()              # пустое пространство слева
+        image_container.addWidget(self.image_label)
+        image_container.addStretch()              # пустое пространство справа
+
+        layout.addLayout(image_container, 1)      # добавляем в общий layout
+
+
+
+        # Статус под изображением
         self.status_label = QLabel(AppConfig.SPLASH_MSG_LOADING)
+        self.status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.status_label.setStyleSheet(StyleSheet.SPLASH_LABEL)
         layout.addWidget(self.status_label)
 
-        self.progress_bar = QProgressBar()
-        self.progress_bar.setFixedHeight(AppConfig.SPLASH_PROGRESS_HEIGHT)
-        self.progress_bar.setRange(0, 100)
-        self.progress_bar.setValue(0)
-        self.progress_bar.setTextVisible(False)
-        layout.addWidget(self.progress_bar)
-        self.progress_bar.hide()
+        # Кастомный тонкий прогресс-бар (только при обновлении)
+        self.progress = _MiniProgressBar()
+        self.progress.setVisible(False)
+        layout.addWidget(self.progress)
+
+        # Перетаскивание мышью
+        self._drag_offset = None
+
+    def _splash_path(self) -> str:
+        base = getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(__file__)))
+        return os.path.join(base, "assets", "splash", "splash.png")
+
+    def _set_image(self):
+        path = self._splash_path()
+        pix = QPixmap(path) if os.path.exists(path) else QPixmap()
+        if not pix.isNull():
+            # Масштабируем примерно под окно
+            w = int(self.width() * 0.7)
+            pix = pix.scaledToWidth(w, Qt.TransformationMode.SmoothTransformation)
+        self.image_label.setPixmap(pix)
 
     def update_status(self, message: str):
         self.status_label.setText(message)
 
     def set_progress(self, value: int, stage: str = None):
-        self.progress_bar.setValue(value)
-        if not self.progress_bar.isVisible():
-            self.progress_bar.show()
+        self.progress.setVisible(True)
+        self.progress.setValue(value)
         if stage:
-            self.status_label.setText(f"{stage}... ({value}%)")
-            if stage == AppConfig.SPLASH_MSG_ERROR:
-                self.hide_progress()
+            self.status_label.setText(f"{stage}... ({int(value)}%)")
 
     def hide_progress(self):
-        self.progress_bar.hide()
+        self.progress.setVisible(False)
+
+    def center_on_screen(self):
+        screen = QGuiApplication.screenAt(QCursor.pos()) or QGuiApplication.primaryScreen()
+        if not screen:
+            return
+        sg = screen.availableGeometry()
+        g = self.frameGeometry()
+        g.moveCenter(sg.center())
+        self.move(g.topLeft())
+
+    # drag
+    def mousePressEvent(self, e):
+        if e.button() == Qt.MouseButton.LeftButton:
+            self._drag_offset = e.globalPosition().toPoint() - self.frameGeometry().topLeft()
+
+    def mouseMoveEvent(self, e):
+        if e.buttons() & Qt.MouseButton.LeftButton and self._drag_offset is not None:
+            self.move(e.globalPosition().toPoint() - self._drag_offset)
+
+    def mouseReleaseEvent(self, e):
+        self._drag_offset = None
+
+
+class _MiniProgressBar(QWidget):
+    """Простой закруглённый прогресс-бар под сплэш."""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._value = 0
+        self.setFixedHeight(AppConfig.SPLASH_PROGRESS_HEIGHT)
+
+    def setValue(self, v: int):
+        self._value = max(0, min(100, int(v)))
+        self.update()
+
+    def paintEvent(self, _):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        r = self.rect()
+        p.setPen(Qt.PenStyle.NoPen)
+        # фон
+        p.setBrush(QColor(ColorPalette.SECONDARY))
+        p.drawRoundedRect(r, r.height() // 2, r.height() // 2)
+        # значение
+        w = int(r.width() * (self._value / 100.0))
+        if w > 0:
+            p.setBrush(QColor(ColorPalette.PRIMARY))
+            p.drawRoundedRect(QRect(0, 0, w, r.height()), r.height() // 2, r.height() // 2)
 
 
 #! НОВОЕ: Универсальная функция для поиска ярлыков
@@ -554,7 +933,7 @@ def try_launch_camtasia_shortcut():
         logging.warning("Ярлык Camtasia на рабочем столе не найден.")
     return False
 
-def focus_camtasia_window(max_retries=3, wait_launch=2.5, poll_interval=0.5):
+def focus_camtasia_window(project=None, max_retries=3, wait_launch=2.5, poll_interval=0.5):
     """
     Попытка сфокусировать Camtasia:
       - ищет окно
@@ -564,7 +943,7 @@ def focus_camtasia_window(max_retries=3, wait_launch=2.5, poll_interval=0.5):
     """
     hwnd = find_camtasia_window()
     if hwnd:
-        move_camtasia_to_bottom_right(hwnd)
+        ensure_camtasia_position_for_project(project or "")
     for attempt in range(max_retries):
         hwnd = find_camtasia_window()
         if hwnd and win32gui.IsWindow(hwnd):
@@ -808,40 +1187,90 @@ def move_camtasia_to_bottom_right(hwnd: int) -> bool:
     )
     return True
 
+def move_camtasia_to(hwnd: int, x: int, y: int) -> bool:
+    if not hwnd or not win32gui.IsWindow(hwnd):
+        return False
+    left, top, right, bottom = win32gui.GetWindowRect(hwnd)
+    w, h = right - left, bottom - top
+    try:
+        win32gui.SetWindowPos(
+            hwnd, win32con.HWND_TOPMOST,
+            int(x), int(y), int(w), int(h),
+            win32con.SWP_SHOWWINDOW
+        )
+        return True
+    except Exception:
+        return False
+
+def ensure_camtasia_position_for_project(project: str) -> bool:
+    hwnd = find_camtasia_window()
+    if not hwnd:
+        return False
+    if project == AppConfig.PROJECT_QQ:
+        # Требование: всегда в (1400, 805) для QQ
+        return move_camtasia_to(hwnd, 1400, 805)
+    else:
+        # Остальные проекты — как было
+        return move_camtasia_to_bottom_right(hwnd)
+
 
 class ToggleSwitch(QPushButton):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setCheckable(True)
         self.setFixedSize(AppConfig.TOGGLE_SWITCH_WIDTH, AppConfig.TOGGLE_SWITCH_HEIGHT)
-        self.clicked.connect(self.update_state)
-        self._circle_pos = 3
+        self._knob_w = 14
+        self._pad = 2
+        self._circle_pos = self._pad
         self.animation = QPropertyAnimation(self, b"circle_pos", self)
         self.animation.setDuration(AppConfig.TOGGLE_ANIMATION_DURATION)
         self.animation.setEasingCurve(QEasingCurve.Type.OutCubic)
 
+        # Анимируем на любом изменении состояния (а не только клик мышью)
+        self.toggled.connect(self._animate)
+
+    # бесшумная установка (для синхронизации состояния из кода)
+    def setCheckedSilent(self, checked: bool):
+        super().setChecked(checked)
+        self._circle_pos = self._right_pos() if checked else self._pad
+        self.update()
+
+    def _right_pos(self) -> int:
+        # правая позиция с учётом текущей ширины
+        return self.width() - self._pad - self._knob_w
+
+    # свойство для QPropertyAnimation
     def get_circle_pos(self): return self._circle_pos
-    def set_circle_pos(self, pos): self._circle_pos = pos; self.update()
+    def set_circle_pos(self, pos): self._circle_pos = int(pos); self.update()
     circle_pos = pyqtProperty(int, fget=get_circle_pos, fset=set_circle_pos)
 
-    def update_state(self):
+    def _animate(self, checked: bool):
+        self.animation.stop()
         self.animation.setStartValue(self._circle_pos)
-        self.animation.setEndValue(20 if self.isChecked() else 3)
+        self.animation.setEndValue(self._right_pos() if checked else self._pad)
         self.animation.start()
 
+    # если кто-то вызовет setChecked вручную — тоже анимируем
     def setChecked(self, checked):
+        if checked == self.isChecked():
+            return
         super().setChecked(checked)
-        self.update_state()
+        self._animate(checked)
 
-    def paintEvent(self, event):
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        painter.setPen(Qt.PenStyle.NoPen)
-        bg_color = QColor(ColorPalette.PRIMARY) if self.isChecked() else QColor(ColorPalette.SECONDARY)
-        painter.setBrush(QBrush(bg_color))
-        painter.drawRoundedRect(0, 0, self.width(), self.height(), 11, 11)
-        painter.setBrush(QBrush(QColor(ColorPalette.SURFACE)))
-        painter.drawEllipse(self._circle_pos, 3, 16, 16)
+    def paintEvent(self, _):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        p.setPen(Qt.PenStyle.NoPen)
+
+        # фон
+        bg = QColor(ColorPalette.PRIMARY) if self.isChecked() else QColor(ColorPalette.SECONDARY)
+        p.setBrush(QBrush(bg))
+        p.drawRoundedRect(0, 0, self.width(), self.height(), self.height() // 2, self.height() // 2)
+
+        # «кнопка»
+        p.setBrush(QBrush(QColor(ColorPalette.SURFACE)))
+        p.drawEllipse(self._circle_pos, self._pad, self._knob_w, self._knob_w)
+
 
 class Notification(QWidget):
     closed = pyqtSignal(QWidget)
@@ -1793,6 +2222,7 @@ class MainWindow(QMainWindow):
         self._executor = ThreadPoolExecutor(max_workers=AppConfig.THREAD_POOL_WORKERS)
         self.injector_minimizer = InjectorMinimizer(self.window_manager, AppConfig.INJECTOR_WINDOW_TITLE)
         self.injector_minimizer.finished.connect(self._on_injector_minimize_finished)
+        
 
         self.current_project = None
         self.is_auto_record_enabled = True
@@ -1807,6 +2237,27 @@ class MainWindow(QMainWindow):
         self.is_launching_recorder = False
         self.chrome_was_visible = False
         self.last_arrangement_time = 0
+        self.is_auto_emoji_enabled = True
+        self._emoji_worker_running = False
+        self._next_emoji_due_ts = 0.0
+        self._settings = QSettings("Vater-v", "OiHelper")
+        self._emoji_period_s = 0.0
+        self._emoji_next_period_s = 0.0   # следующий период, применится после текущего дедлайна
+        self._sitout_last_ts = 0.0
+
+
+
+        def _load_toggle(name: str, default: bool) -> bool:
+            return self._settings.value(f"toggles/{name}", default, type=bool)
+
+        self.is_automation_enabled         = _load_toggle("automation",  True)
+        self.is_auto_record_enabled        = _load_toggle("auto_record", True)
+        self.is_auto_popup_closing_enabled = _load_toggle("auto_popup",  False)
+        self.is_auto_emoji_enabled         = _load_toggle("auto_emoji",  True)
+
+        if not hasattr(self, "_syncing_toggles"):
+            self._syncing_toggles = False
+
 
         self.shell = win32com.client.Dispatch("WScript.Shell") if WIN32COM_AVAILABLE else None
 
@@ -1821,6 +2272,26 @@ class MainWindow(QMainWindow):
         self.setWindowIcon(QIcon(icon_path))
 
 
+    def update_emoji_progress(self):
+        bar = getattr(self, "emoji_progress_bar", None)
+        lbl = getattr(self, "emoji_progress_label", None)
+        if not bar or not lbl:
+            return
+        try:
+            if (not self.is_auto_emoji_enabled
+                or self._next_emoji_due_ts <= 0
+                or self._emoji_period_s <= 0):
+                bar.setMaximum(1.0); bar.setValue(0.0); lbl.setText("Эмоция через: —"); return
+            now = time.monotonic()
+            remaining = max(0.0, self._next_emoji_due_ts - now)
+            elapsed = max(0.0, self._emoji_period_s - remaining)
+            bar.setMaximum(self._emoji_period_s)
+            bar.setValue(elapsed)
+            lbl.setText("Эмоция через: " + time.strftime('%H:%M:%S', time.gmtime(int(remaining))))
+        except RuntimeError:
+            # Виджет удалён между тиками — тихо выходим
+            return
+
 
 
     def closeEvent(self, event):
@@ -1829,6 +2300,11 @@ class MainWindow(QMainWindow):
             timer.stop()
         self._executor.shutdown(wait=False) #! ДОБАВЛЕНО: Корректное завершение пула потоков
         super().closeEvent(event)
+
+    def _log_mt(self, message: str, level: str = "info"):
+        # Планирует вызов self.log(...) в UI-потоке
+        QTimer.singleShot(0, lambda m=message, l=level: self.log(m, l))
+
 
     def _enum_windows_for_pid(self, pid: int) -> list[int]:
         hwnds = []
@@ -1845,6 +2321,266 @@ class MainWindow(QMainWindow):
         except Exception:
             pass
         return hwnds
+
+    def check_auto_emoji(self):
+        if not (self.is_auto_emoji_enabled and self.current_project):
+            return
+        if self._emoji_worker_running:
+            return
+        if self._next_emoji_due_ts <= 0:
+            self._schedule_next_emoji(reason="no_schedule")
+            return
+        if time.monotonic() < self._next_emoji_due_ts:
+            return
+
+        # Видимое сообщение перед сканированием
+        self.log(f"{AppConfig.EMOJI_LOG_PREFIX} Дедлайн наступил — ищу эмодзи.", "info")
+
+        # Время пришло — запускаем воркер (не блокируем UI)
+        self._emoji_worker_running = True
+        def _job():
+            try:
+                clicked = self._scan_and_click_any_emoji()
+                if clicked:
+                    self._log_mt(f"{AppConfig.EMOJI_LOG_PREFIX} Клик по эмодзи выполнен.", "info")
+                else:
+                    self._log_mt(f"{AppConfig.EMOJI_LOG_PREFIX} Поиск отменён/условия пропали.", "warning")
+            finally:
+                self._emoji_worker_running = False
+                self._schedule_next_emoji(reason="after_worker")
+
+        threading.Thread(target=_job, daemon=True).start()
+
+    def sitout_all(self):
+        now = time.monotonic()
+        if now - getattr(self, "_sitout_last_ts", 0.0) < getattr(AppConfig, "SITOUT_COOLDOWN_S", 10):
+            self.log("Ситаут уже выполнялся недавно — антиспам.", "warning")
+            return
+        self._sitout_last_ts = now
+
+        """Ищет на экране все кнопки 'sitout' по темплейтам и кликает по каждой."""
+        if self.current_project != AppConfig.PROJECT_GG:
+            return
+        if not (CV2_AVAILABLE and PYAUTOGUI_AVAILABLE):
+            self.log("CV2/PyAutoGUI недоступны — поиск 'Ситаут' невозможен.", "error")
+            return
+
+        templates_dir = self._get_templates_dir(self.current_project)
+        if not templates_dir:
+            return
+
+        # собираем темплейты: templates/GG/sitout/*.png и fallback sitout*.png
+        files = []
+        sitout_dir = os.path.join(templates_dir, AppConfig.SITOUT_DIR_NAME)
+        try:
+            if os.path.isdir(sitout_dir):
+                files += [os.path.join(sitout_dir, f) for f in os.listdir(sitout_dir) if f.lower().endswith(".png")]
+            files += [os.path.join(templates_dir, f) for f in os.listdir(templates_dir)
+                    if f.lower().endswith(".png") and f.lower().startswith("sitout")]
+        except Exception:
+            pass
+        files = list(dict.fromkeys(files))
+        if not files:
+            self.log("Шаблоны 'sitout' не найдены.", "warning")
+            return
+
+        # единый скриншот
+        screenshot = pyautogui.screenshot()
+        screen_gray = cv2.cvtColor(np.array(screenshot), cv2.COLOR_RGB2GRAY)
+
+        centers = []
+        for path in files:
+            tpl = cv2.imread(path, cv2.IMREAD_GRAYSCALE)
+            if tpl is None:
+                continue
+            res = cv2.matchTemplate(screen_gray, tpl, cv2.TM_CCOEFF_NORMED)
+            ys, xs = np.where(res >= AppConfig.SITOUT_CONFIDENCE)
+            h, w = tpl.shape[:2]
+            centers += [(int(x + w/2), int(y + h/2)) for x, y in zip(xs, ys)]
+
+        # простая дедупликация по расстоянию (без NMS)
+        dedup = []
+        for cx, cy in centers:
+            if all(abs(cx - x) > 18 or abs(cy - y) > 18 for x, y in dedup):
+                dedup.append((cx, cy))
+
+        if not dedup:
+            self.log("Кнопки 'Ситаут' на экране не найдены.", "info")
+            return
+
+        self.log(f"Нашёл {len(dedup)} кнопок 'Ситаут'. Нажимаю по всем...", "info")
+        for (cx, cy) in dedup:
+            if self.window_manager.robust_click(cx, cy, log_prefix="[Sitout]"):
+                self.window_manager.click_visual_request.emit(cx, cy)
+                delay = AppConfig.SITOUT_CLICK_DELAY_MS + random.randint(-60, 60)
+                time.sleep(max(200, delay) / 1000.0)
+
+
+    def _scan_and_click_any_emoji(self) -> bool:
+        """
+        Ждём появления ЛЮБОЙ эмоции, но кликаем по СЛУЧАЙНО выбранной из всех обнаруженных за скан.
+        Условия выхода:
+        - тумблер выключен
+        - проект сменился
+        - число столов == 0
+        """
+        if not (self.is_auto_emoji_enabled and self.current_project):
+            return False
+
+        proj = self.current_project
+        if proj not in ("QQ", "GG"):
+            return False
+
+        templates_dir = self._get_templates_dir(proj)
+        if not templates_dir:
+            return False
+        emoji_dir = os.path.join(templates_dir, "emoji")
+        if not os.path.isdir(emoji_dir):
+            self.log(f"{AppConfig.EMOJI_LOG_PREFIX} Папка {emoji_dir} не найдена.", "warning")
+            return False
+
+        wm = self.window_manager
+        self._log_mt(f"{AppConfig.EMOJI_LOG_PREFIX} Ожидание появления эмодзи...", "info")
+
+        # Основной цикл ожидания
+        while True:
+            if not self.is_auto_emoji_enabled or self.current_project != proj:
+                return False
+            if self._get_table_count() <= 0:
+                return False
+
+            # Собираем всех кандидатов за одну итерацию
+            try:
+                files = [f for f in os.listdir(emoji_dir) if f.lower().endswith(".png")]
+            except Exception:
+                files = []
+            # Перемешаем порядок обхода, чтобы в разные итерации разный набор попадал первым
+            random.shuffle(files)
+
+            candidates = []  # (path, (cx, cy), score)
+            for name in files:
+                path = os.path.join(emoji_dir, name)
+                if not os.path.isfile(path):
+                    continue
+
+                # Ожидаем, что wm.find_template вернёт (found, (x, y, w, h), score) ИЛИ (found, (cx, cy), score)
+                try:
+                    found, box_or_center, score = wm.find_template(
+                        path,
+                        confidence=AppConfig.DEFAULT_CV_CONFIDENCE,
+                        hwnd=None,
+                        return_center=True,   # если поддерживается
+                        log_prefix=AppConfig.EMOJI_LOG_PREFIX
+                    )
+                except TypeError:
+                    # Старый менеджер: возвращает либо (x, y), либо None
+                    res = wm.find_template(path, confidence=AppConfig.DEFAULT_CV_CONFIDENCE)
+                    if isinstance(res, tuple) and len(res) == 2:
+                        # корректно нормализуем центр
+                        cx, cy = int(res[0]), int(res[1])
+                        found = True
+                        box_or_center = (cx, cy)
+                        score = 1.0
+                    else:
+                        found = False
+                if not found:
+                    continue
+
+                # нормализуем центр клика
+                if isinstance(box_or_center, tuple) and len(box_or_center) == 2:
+                    cx, cy = int(box_or_center[0]), int(box_or_center[1])
+                elif isinstance(box_or_center, tuple) and len(box_or_center) == 4:
+                    x, y, w, h = box_or_center
+                    cx, cy = int(x + w / 2), int(y + h / 2)
+                else:
+                    # на всякий случай — пропуск непонятного формата
+                    continue
+
+                candidates.append((path, (cx, cy), float(score) if score is not None else 1.0))
+
+                # Если кандидаты есть — выбираем СЛУЧАЙНЫЙ и кликаем
+                if candidates:
+                    choice = random.choice(candidates)
+                    name = os.path.basename(choice[0])
+                    _, (cx, cy), sc = choice
+
+                    # Новое: явный лог перед кликом по найденной эмоции
+                    self._log_mt(f"{AppConfig.EMOJI_LOG_PREFIX} Нашёл эмодзи '{name}'. Жму...", "info")
+
+                    ok = self.window_manager.robust_click(cx, cy, log_prefix=AppConfig.EMOJI_LOG_PREFIX)
+                    if ok:
+                        self._log_mt(f"{AppConfig.EMOJI_LOG_PREFIX} Клик по '{name}', score={sc:.3f}.", "info")
+                        self.window_manager.click_visual_request.emit(cx, cy)
+                        return True
+                    else:
+                        self._log_mt(f"{AppConfig.EMOJI_LOG_PREFIX} Не удалось кликнуть по '{name}'.", "warning")
+
+            # Иначе — ждём и снова сканируем
+            time.sleep(AppConfig.EMOJI_SCAN_SLEEP_MS / 1000.0)
+
+
+    def toggle_auto_emoji(self):
+        self.is_auto_emoji_enabled = bool(self.auto_emoji_toggle.isChecked())
+        self._settings.setValue("toggles/auto_emoji", self.is_auto_emoji_enabled)
+        if self.is_auto_emoji_enabled and self.current_project:
+            # сразу перепланируем
+            self._next_emoji_due_ts = 0.0
+            self._schedule_next_emoji(reason="toggle_on")
+            # и гарантированно запускаем таймер
+            if not self.timers["emoji"].isActive():
+                self.timers["emoji"].start(AppConfig.EMOJI_CHECK_INTERVAL_MS)
+            self.log(f"{AppConfig.EMOJI_LOG_PREFIX} Автоэмодзи: ВКЛ.", "info")
+        else:
+            self.timers["emoji"].stop()
+            self._next_emoji_due_ts = 0.0
+            self._emoji_period_s = 0.0
+            self.update_emoji_progress()
+            self.log(f"{AppConfig.EMOJI_LOG_PREFIX} Автоэмодзи: ВЫКЛ.", "info")
+
+    def _get_table_count(self) -> int:
+        if not self.current_project:
+            return 0
+        config = PROJECT_CONFIGS.get(self.current_project)
+        if not config:
+            return 0
+        found = self.window_manager.find_windows_by_config(config, AppConfig.KEY_TABLE, int(self.winId()))
+        return len(found)
+
+    def _compute_emoji_period(self, tables: int) -> float:
+        """Расчёт задержки до следующего клика с учётом числа столов и проекта."""
+        proj = self.current_project
+        min_m, max_m = AppConfig.EMOJI_RANGES_MINUTES.get(proj, (10, 20))
+        base_minutes = random.uniform(min_m, max_m)
+        effective_minutes = base_minutes / max(1, tables)
+        delay_s = max(5.0, effective_minutes * 60.0)
+        return delay_s
+
+
+    def _schedule_next_emoji(self, reason: str = ""):
+        """Назначает время следующего клика. Если подготовлен next-период — используем его,
+        иначе пересчитываем по актуальному числу столов. Текущий дедлайн не трогаем здесь!"""
+        if not self.current_project:
+            self._next_emoji_due_ts = 0.0
+            return
+
+        tables = self._get_table_count()
+        if tables <= 0:
+            self._next_emoji_due_ts = 0.0
+            return
+
+        # если заранее записали следующий период — используем его, иначе посчитаем сейчас
+        delay_s = self._emoji_next_period_s if getattr(self, "_emoji_next_period_s", 0.0) > 0 else self._compute_emoji_period(tables)
+        self._emoji_next_period_s = 0.0
+
+        self._emoji_period_s = delay_s
+        self._next_emoji_due_ts = time.monotonic() + delay_s
+
+        self._log_mt(
+            f"{AppConfig.EMOJI_LOG_PREFIX} План: через ~{int(delay_s)}с "
+            f"(proj={self.current_project}, tables={tables}, reason={reason}).",
+            "info"
+        )
+
 
     def close_processes_by_names(self, names: list[str]) -> dict:
         """
@@ -1942,29 +2678,56 @@ class MainWindow(QMainWindow):
             return QApplication.primaryScreen()
 
     def log(self, message: str, message_type: str):
+        # подавляем всплывающие уведомления, если открыт лобби-сплэш
+        try:
+            splash_visible = bool(self.splash and self.splash.isVisible())
+        except Exception:
+            splash_visible = False
+
+        if splash_visible:
+            # критические ошибки всё равно улетают в TG, но без всплывашки
+            if message_type == 'error':
+                self.telegram_notifier.send_message(AppConfig.MSG_TG_CRITICAL_ERROR.format(message))
+            return
+
         self.notification_manager.show(message, message_type)
         if message_type == 'error':
             self.telegram_notifier.send_message(AppConfig.MSG_TG_CRITICAL_ERROR.format(message))
 
+
     def on_project_changed(self, new_project_name: Optional[str]):
-        if self.current_project == new_project_name: return
+        if self.current_project == new_project_name:
+            return
 
         if self.current_project == AppConfig.PROJECT_GG and hasattr(self, 'close_tables_button'):
             del self.close_tables_button
 
         self.current_project = new_project_name
         self.last_table_count = 0
+
+        # всегда сбрасываем проектные таймеры перед переключением
         self.timers["auto_arrange"].stop()
         self.timers["popup_check"].stop()
+        self.timers["emoji"].stop()
         self.update_window_title()
 
         if new_project_name:
+            # нашли проект — показываем UI проекта
             self.build_project_ui()
-            self.timers["auto_arrange"].start(AppConfig.AUTO_ARRANGE_INTERVAL)
+            if self.splash and self.splash.isVisible():
+                self.splash.close()
+            self.show()
 
             if new_project_name == AppConfig.PROJECT_QQ:
+                hwnd = find_camtasia_window()
+                if hwnd:
+                    move_camtasia_to(hwnd, 1400, 805)
                 self.position_window_top_right()
                 self.timers["popup_check"].start(AppConfig.POPUP_CHECK_INTERVAL_FAST)
+                if self.is_auto_emoji_enabled:
+                    self._schedule_next_emoji(reason="project_changed")
+                    self.timers["emoji"].start(AppConfig.EMOJI_CHECK_INTERVAL_MS)
+
             elif new_project_name == AppConfig.PROJECT_GG:
                 self.position_gg_panel()
                 hwnd = find_camtasia_window()
@@ -1972,13 +2735,56 @@ class MainWindow(QMainWindow):
                     move_camtasia_to_bottom_right(hwnd)
                 QTimer.singleShot(AppConfig.INJECTOR_MINIMIZE_DELAY, self.injector_minimizer.start)
                 self.timers["popup_check"].start(AppConfig.POPUP_CHECK_INTERVAL_FAST)
+                if self.is_auto_emoji_enabled:
+                    self._schedule_next_emoji(reason="project_changed")
+                    self.timers["emoji"].start(AppConfig.EMOJI_CHECK_INTERVAL_MS)
 
+            # ВАЖНО: запускаем авто-расстановку, если автоматика включена
             if self.is_automation_enabled:
-                if new_project_name == AppConfig.PROJECT_QQ: self.check_and_launch_opencv_server()
+                if not self.timers["auto_arrange"].isActive():
+                    self.timers["auto_arrange"].start(AppConfig.AUTO_ARRANGE_INTERVAL)
+                # первый прогон сразу — чтобы не ждать тик таймера
+                self.check_for_new_tables()
+
+            # доп. системные действия
+            if self.is_automation_enabled:
+                if new_project_name == AppConfig.PROJECT_QQ:
+                    self.check_and_launch_opencv_server()
                 self.arrange_other_windows()
         else:
-            self.build_lobby_ui(AppConfig.LOBBY_MSG_SEARCHING)
-            self.position_window_default()
+            # проект не определён — уходим в лобби
+            if not self.splash.isVisible():
+                self.enter_lobby(AppConfig.LOBBY_MSG_SEARCHING)
+
+
+
+    def enter_lobby(self, status: str):
+        """Единая точка входа в лобби: показываем сплэш, скрываем/чистим основной UI."""
+        try:
+            if hasattr(self, "splash") and self.splash:
+                if not self.splash.isVisible():
+                    self.splash.show()
+                    self.splash.center_on_screen()
+                self.splash.update_status(status)
+        except Exception:
+            pass
+
+        # Спрячем основное окно и удалим прошлый интерфейс проекта
+        try:
+            if self.isVisible():
+                self.hide()
+            self._clear_layout()
+        except Exception:
+            pass
+
+        # Остановим проектные сканеры/интервалы, чтоб не мигало в фоне
+        try:
+            self.timers["auto_arrange"].stop()
+            self.timers["popup_check"].stop()
+            self.timers["emoji"].stop()
+        except Exception:
+            pass
+
 
     def _on_injector_minimize_finished(self, success: bool):
         if success:
@@ -1987,12 +2793,31 @@ class MainWindow(QMainWindow):
             self.log(f"Не удалось свернуть окно '{self.injector_minimizer.injector_title}'!", "error")
 
     def _clear_layout(self):
-        old_widget = self.centralWidget()
-        if old_widget is not None:
-            old_widget.setParent(None)
-            old_widget.deleteLater()
-        self.central_widget = QWidget()
-        self.setCentralWidget(self.central_widget)
+        # Очищаем вложенную область контента
+        try:
+            if hasattr(self, "_chrome") and self._chrome and hasattr(self._chrome, "content_layout"):
+                # Удаляем старый self.central_widget, если был
+                old = getattr(self, "central_widget", None)
+                if old is not None:
+                    old.setParent(None)
+                    old.deleteLater()
+                # Создаём новый контейнер под проектный UI
+                self.central_widget = QWidget()
+                self._chrome.content_layout.addWidget(self.central_widget)
+            else:
+                # Фолбэк на старую логику (на случай очень ранних вызовов)
+                old_widget = self.centralWidget()
+                if old_widget is not None:
+                    old_widget.setParent(None)
+                    old_widget.deleteLater()
+                self.central_widget = QWidget()
+                self.setCentralWidget(self.central_widget)
+            for attr in ("emoji_progress_bar", "emoji_progress_label"):
+                if hasattr(self, attr):
+                    setattr(self, attr, None)
+        except Exception:
+            pass
+
 
     def _check_resume_result(self):
         hwnd = find_camtasia_window()
@@ -2049,14 +2874,14 @@ class MainWindow(QMainWindow):
             return
 
         if self._camtasia_action == AppConfig.ACTION_START:
-            focus_camtasia_window()
+            focus_camtasia_window(self.current_project)
             self.window_manager.click_camtasia_fullscreen(hwnd)
             self._do_camtasia_click(os.path.join(AppConfig.TEMPLATES_DIR, AppConfig.CAMTASIA_REC_TEMPLATE), hwnd)
         elif self._camtasia_action == AppConfig.ACTION_STOP:
-            focus_camtasia_window()
+            focus_camtasia_window(self.current_project)
             self._do_camtasia_click(os.path.join(AppConfig.TEMPLATES_DIR, AppConfig.CAMTASIA_STOP_TEMPLATE), hwnd)
         elif self._camtasia_action == AppConfig.ACTION_RESUME:
-            focus_camtasia_window()
+            focus_camtasia_window(self.current_project)
             self._do_camtasia_click(os.path.join(AppConfig.TEMPLATES_DIR, AppConfig.CAMTASIA_RESUME_TEMPLATE), hwnd)
 
         self._camtasia_attempt_idx += 1
@@ -2097,44 +2922,46 @@ class MainWindow(QMainWindow):
             #self.log("Неизвестное действие для hotkey!", "error")
 
     def init_ui(self):
-        self.setWindowFlags(self.windowFlags() | Qt.WindowType.WindowStaysOnTopHint)
-        self.setStyleSheet(StyleSheet.MAIN_WINDOW)
-        if os.path.exists(AppConfig.ICON_PATH): self.setWindowIcon(QIcon(AppConfig.ICON_PATH))
-        self.setFixedSize(AppConfig.DEFAULT_WIDTH, AppConfig.DEFAULT_HEIGHT)
+        # 1) Инициализация фреймлес-хелпера
+        self._chrome = FramelessHelper(self, rounded=True)
+
+        # 2) Заголовок «OiHelper vX (проект)» + иконка
+        title = AppConfig.APP_TITLE_TEMPLATE.format(version=AppConfig.CURRENT_VERSION)
+        if self.current_project:
+            title += f" ({self.current_project})"
+        self._titlebar = CustomTitleBar(
+            parent=self,
+            title_text=title,
+            icon_path=icon_path,
+            show_min=False,   # по запросу — только закрыть; можно включить по вкусу
+            show_max=False
+        )
+        self._chrome.add_titlebar(self._titlebar)
+
+        # 3) Контент-хост вместо прямого centralWidget
+        #   ВНИМАНИЕ: теперь self.central_widget — это вложенный в content_host виджет
         self.central_widget = QWidget()
-        self.setCentralWidget(self.central_widget)
+        self._chrome.content_layout.addWidget(self.central_widget)
+
+        # 4) Стартовые размеры (как было)
+        self.resize(AppConfig.DEFAULT_WIDTH, AppConfig.DEFAULT_HEIGHT)
+
+        # 5) Иконка приложения (остаётся)
+        if os.path.exists(icon_path):
+            self.setWindowIcon(QIcon(icon_path))
+
+        # Стиль фона центрального слоя
+        self.setStyleSheet(StyleSheet.MAIN_WINDOW)
 
     def build_lobby_ui(self, message: str = AppConfig.LOBBY_MSG_SEARCHING):
+        # Лобби через ComboBox удалено. Используется SplashScreen.
+        # Оставляем для совместимости вызовов.
         try:
             self._clear_layout()
-            self.setFixedSize(AppConfig.DEFAULT_WIDTH, AppConfig.DEFAULT_HEIGHT)
-            layout = QVBoxLayout(self.central_widget)
-            layout.setContentsMargins(20, 20, 20, 20)
-            layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.lobby_status_label = None
+        except Exception:
+            pass
 
-            self.lobby_status_label = QLabel(message)
-            self.lobby_status_label.setStyleSheet(StyleSheet.LOBBY_LABEL)
-            self.lobby_status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-
-            manual_select_label = QLabel(AppConfig.LOBBY_MSG_MANUAL_SELECT_PROMPT)
-            manual_select_label.setStyleSheet(StyleSheet.LOBBY_LABEL)
-            manual_select_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-
-            self.project_combo = QComboBox()
-            self.project_combo.setStyleSheet(StyleSheet.COMBO_BOX)
-            self.project_combo.addItem(AppConfig.LOBBY_MSG_COMBO_PLACEHOLDER)
-            self.project_combo.addItems(PROJECT_CONFIGS.keys())
-            self.project_combo.currentTextChanged.connect(self.on_project_selected_manually)
-
-            layout.addWidget(self.lobby_status_label)
-            layout.addSpacing(20)
-            layout.addWidget(manual_select_label)
-            layout.addWidget(self.project_combo)
-            layout.addStretch()
-
-            self.update_window_title()
-        except Exception as e:
-            logging.critical("Критическая ошибка в build_lobby_ui", exc_info=True)
 
     def on_project_selected_manually(self, project_name: str):
         if project_name in PROJECT_CONFIGS:
@@ -2160,24 +2987,42 @@ class MainWindow(QMainWindow):
             toggles_frame = QFrame()
             toggles_layout = QGridLayout(toggles_frame)
             toggles_layout.setContentsMargins(0,0,0,0)
+            toggles_layout.setHorizontalSpacing(10)
+            toggles_layout.setVerticalSpacing(4)
             self.automation_toggle = ToggleSwitch()
             self.auto_record_toggle = ToggleSwitch()
             self.auto_popup_toggle = ToggleSwitch()
             automation_label = QLabel("Автоматика")
-            automation_label.setStyleSheet(StyleSheet.STATUS_LABEL)
+            automation_label.setStyleSheet(StyleSheet.PROGRESS_BAR_LABEL)
             auto_record_label = QLabel("Автозапись")
-            auto_record_label.setStyleSheet(StyleSheet.STATUS_LABEL)
+            auto_record_label.setStyleSheet(StyleSheet.PROGRESS_BAR_LABEL)
             auto_popup_label = QLabel("Автозакрытие спама (beta)")
-            auto_popup_label.setStyleSheet(StyleSheet.STATUS_LABEL)
-            toggles_layout.addWidget(automation_label, 0, 0)
-            toggles_layout.addWidget(self.automation_toggle, 0, 1)
-            toggles_layout.addWidget(auto_record_label, 1, 0)
-            toggles_layout.addWidget(self.auto_record_toggle, 1, 1)
-            toggles_layout.addWidget(auto_popup_label, 2, 0)
-            toggles_layout.addWidget(self.auto_popup_toggle, 2, 1)
-            if self.current_project != AppConfig.PROJECT_GG:
+            auto_popup_label.setStyleSheet(StyleSheet.PROGRESS_BAR_LABEL)
+            self.auto_emoji_toggle = ToggleSwitch()
+            auto_emoji_label = QLabel("Автоэмодзи")
+            auto_emoji_label.setStyleSheet(StyleSheet.PROGRESS_BAR_LABEL)
+            row = 3
+            toggles_layout.addWidget(automation_label,    0, 0)
+            toggles_layout.addWidget(self.automation_toggle, 0, 1, alignment=Qt.AlignmentFlag.AlignRight)
+
+            toggles_layout.addWidget(auto_record_label,   1, 0)
+            toggles_layout.addWidget(self.auto_record_toggle, 1, 1, alignment=Qt.AlignmentFlag.AlignRight)
+
+            toggles_layout.addWidget(auto_popup_label,    2, 0)
+            toggles_layout.addWidget(self.auto_popup_toggle, 2, 1, alignment=Qt.AlignmentFlag.AlignRight)
+
+            toggles_layout.addWidget(auto_emoji_label,    3, 0)
+            toggles_layout.addWidget(self.auto_emoji_toggle, 3, 1, alignment=Qt.AlignmentFlag.AlignRight)
+
+            if self.current_project == AppConfig.PROJECT_GG:
+                # левая колонка: ширина и растяжение, чтобы не схлопывалась
+                toggles_frame.setMinimumWidth(220)
+                toggles_layout.setColumnStretch(0, 1)  # текст тянется
+                toggles_layout.setColumnStretch(1, 0)  # сам тумблер фикс
+                main_layout.addWidget(toggles_frame, 1)  # даём такой же вес, как кнопкам/прогрессу
+            else:
                 toggles_layout.setColumnStretch(0, 1)
-            main_layout.addWidget(toggles_frame)
+                main_layout.addWidget(toggles_frame)
 
             if self.current_project == AppConfig.PROJECT_GG:
                 separator = QFrame()
@@ -2187,40 +3032,101 @@ class MainWindow(QMainWindow):
 
             # --- Buttons ---
             buttons_frame = QFrame()
-            buttons_layout = QHBoxLayout(buttons_frame)
-            buttons_layout.setContentsMargins(0,0,0,0)
-            buttons_layout.setSpacing(8)
-            self.arrange_tables_button = QPushButton(AppConfig.MSG_ARRANGE_TABLES)
-            self.arrange_system_button = QPushButton(AppConfig.MSG_ARRANGE_SYSTEM)
-            buttons_layout.addWidget(self.arrange_tables_button)
-            buttons_layout.addWidget(self.arrange_system_button)
             if self.current_project == AppConfig.PROJECT_GG:
-                self.close_tables_button = QPushButton(AppConfig.MSG_CLICK_COMMAND)
-                buttons_layout.addWidget(self.close_tables_button)
-                main_layout.addWidget(buttons_frame, 1)
-            else:
-                main_layout.addWidget(buttons_frame)
-                main_layout.addStretch(1)
+                grid = QGridLayout(buttons_frame)
+                grid.setContentsMargins(0, 0, 0, 0)
+                grid.setHorizontalSpacing(8)
+                grid.setVerticalSpacing(8)
 
-            # --- Progress Bar ---
-            self.progress_frame = QFrame()
-            if self.current_project == AppConfig.PROJECT_GG:
-                progress_layout = QVBoxLayout(self.progress_frame)
+                self.arrange_tables_button = QPushButton(AppConfig.MSG_ARRANGE_TABLES)
+                self.arrange_system_button = QPushButton(AppConfig.MSG_ARRANGE_SYSTEM)
+                self.close_tables_button   = QPushButton(AppConfig.MSG_CLICK_COMMAND)
+                self.sitout_all_button     = QPushButton(AppConfig.MSG_SITOUT_ALL)
+
+                grid.addWidget(self.arrange_tables_button, 0, 0)
+                grid.addWidget(self.arrange_system_button, 0, 1)
+                grid.addWidget(self.close_tables_button,   1, 0)
+                grid.addWidget(self.sitout_all_button,     1, 1)
+
+                for b in (self.arrange_tables_button, self.arrange_system_button,
+                        self.close_tables_button, self.sitout_all_button):
+                    b.setFixedHeight(30)
+                    b.setMinimumWidth(160)
+                    b.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+
+
+                main_layout.addWidget(buttons_frame, 1)
+                # --- Progress Bars (GG тоже) ---
+                self.progress_group = QFrame()
+                pg_v = QVBoxLayout(self.progress_group)
+                pg_v.setContentsMargins(0, 0, 0, 0)
+                pg_v.setSpacing(6)
+
+                # полосы
+                self.progress_bar = AnimatedProgressBar()
+                self.progress_bar.setFixedHeight(8)
+                self.emoji_progress_bar = AnimatedProgressBar()
+                self.emoji_progress_bar.setFixedHeight(8)
+
+                # подписи в одну строку
+                labels_row = QHBoxLayout()
+                labels_row.setContentsMargins(0, 0, 0, 0)
+                labels_row.setSpacing(12)
+                self.progress_bar_label = QLabel()
+                self.progress_bar_label.setStyleSheet(StyleSheet.PROGRESS_BAR_LABEL)
+                self.emoji_progress_label = QLabel("Эмоция через: —")
+                self.emoji_progress_label.setStyleSheet(StyleSheet.PROGRESS_BAR_LABEL)
+                labels_row.addWidget(self.progress_bar_label)
+                labels_row.addWidget(self.emoji_progress_label)
+                labels_row.addStretch(1)
+
+                pg_v.addWidget(self.progress_bar)
+                pg_v.addWidget(self.emoji_progress_bar)
+                pg_v.addLayout(labels_row)
+
+                main_layout.addWidget(self.progress_group, 1)
+
             else:
-                progress_layout = QHBoxLayout(self.progress_frame)
-            progress_layout.setContentsMargins(0,0,0,0)
-            self.progress_bar = AnimatedProgressBar()
-            self.progress_bar.setFixedHeight(AppConfig.PROGRESS_BAR_HEIGHT)
-            self.progress_bar_label = QLabel()
-            self.progress_bar_label.setStyleSheet(StyleSheet.PROGRESS_BAR_LABEL)
-            if self.current_project == AppConfig.PROJECT_GG:
-                progress_layout.addWidget(self.progress_bar)
-                progress_layout.addWidget(self.progress_bar_label)
-                main_layout.addWidget(self.progress_frame, 1)
-            else:
-                progress_layout.addWidget(self.progress_bar, 1)
-                progress_layout.addWidget(self.progress_bar_label)
-                main_layout.addWidget(self.progress_frame)
+                buttons_layout = QHBoxLayout(buttons_frame)
+                buttons_layout.setContentsMargins(0, 0, 0, 0)
+                buttons_layout.setSpacing(8)
+                self.arrange_tables_button = QPushButton(AppConfig.MSG_ARRANGE_TABLES)
+                self.arrange_system_button = QPushButton(AppConfig.MSG_ARRANGE_SYSTEM)
+                buttons_layout.addWidget(self.arrange_tables_button)
+                buttons_layout.addWidget(self.arrange_system_button)
+                main_layout.addWidget(buttons_frame)
+
+                # --- Progress Bars (stack) ---
+                self.progress_group = QFrame()
+                pg_v = QVBoxLayout(self.progress_group)
+                pg_v.setContentsMargins(0, 0, 0, 0)
+                pg_v.setSpacing(6)
+
+                # полосы
+                self.progress_bar = AnimatedProgressBar()
+                self.progress_bar.setFixedHeight(8)  # было AppConfig.PROGRESS_BAR_HEIGHT
+                self.emoji_progress_bar = AnimatedProgressBar()
+                self.emoji_progress_bar.setFixedHeight(8)
+
+                # подписи в одну строку
+                labels_row = QHBoxLayout()
+                labels_row.setContentsMargins(0, 0, 0, 0)
+                labels_row.setSpacing(12)
+                self.progress_bar_label = QLabel()
+                self.progress_bar_label.setStyleSheet(StyleSheet.PROGRESS_BAR_LABEL)
+                self.emoji_progress_label = QLabel("Эмоция через: —")
+                self.emoji_progress_label.setStyleSheet(StyleSheet.PROGRESS_BAR_LABEL)
+                labels_row.addWidget(self.progress_bar_label)
+                labels_row.addWidget(self.emoji_progress_label)
+                labels_row.addStretch(1)
+
+                pg_v.addWidget(self.progress_bar)
+                pg_v.addWidget(self.emoji_progress_bar)
+                pg_v.addLayout(labels_row)
+
+                main_layout.addWidget(self.progress_group, 1)
+
+
 
             self.apply_styles_and_effects()
             self.update_project_ui_state()
@@ -2231,6 +3137,26 @@ class MainWindow(QMainWindow):
     def apply_styles_and_effects(self):
         try:
             buttons_to_style = [self.arrange_tables_button, self.arrange_system_button]
+            if hasattr(self, 'close_tables_button'):
+                buttons_to_style.append(self.close_tables_button)
+            if hasattr(self, 'sitout_all_button'):
+                buttons_to_style.append(self.sitout_all_button)
+
+            self.arrange_tables_button.setStyleSheet(StyleSheet.get_button_style(primary=True))
+            self.arrange_system_button.setStyleSheet(StyleSheet.get_button_style(primary=False))
+            if hasattr(self, 'close_tables_button'):
+                self.close_tables_button.setStyleSheet(StyleSheet.get_button_style(primary=False))
+            if hasattr(self, 'sitout_all_button'):
+                self.sitout_all_button.setStyleSheet(StyleSheet.get_button_style(primary=False))
+
+            for btn in buttons_to_style:
+                if btn:
+                    shadow = QGraphicsDropShadowEffect()
+                    shadow.setBlurRadius(15)
+                    shadow.setColor(QColor(ColorPalette.BUTTON_SHADOW))
+                    shadow.setOffset(0, 2)
+                    btn.setGraphicsEffect(shadow)
+
             if hasattr(self, 'close_tables_button'):
                 buttons_to_style.append(self.close_tables_button)
 
@@ -2248,23 +3174,50 @@ class MainWindow(QMainWindow):
                     btn.setGraphicsEffect(shadow)
         except Exception as e:
             logging.critical("Критическая ошибка в apply_styles_and_effects", exc_info=True)
+        
 
     def update_window_title(self):
         title = AppConfig.APP_TITLE_TEMPLATE.format(version=AppConfig.CURRENT_VERSION)
-        if self.current_project: title += f" ({self.current_project})"
+        if self.current_project:
+            title += f" ({self.current_project})"
         self.setWindowTitle(title)
+        # Обновим кастомную шапку
+        if hasattr(self, "_titlebar") and self._titlebar:
+            self._titlebar.set_title(title)
 
     def update_project_ui_state(self):
-        if not self.current_project: return
-        self.automation_toggle.setChecked(self.is_automation_enabled)
-        self.auto_record_toggle.setChecked(self.is_auto_record_enabled)
-        self.auto_popup_toggle.setChecked(self.is_auto_popup_closing_enabled)
-        self.progress_frame.setVisible(self.recording_start_time > 0)
+        if not self.current_project:
+            return
+
+        if not hasattr(self, "_syncing_toggles"):
+            self._syncing_toggles = False
+
+        # ВАЖНО: инициализируем до использования
         is_project_active = self.current_project is not None
-        self.arrange_tables_button.setEnabled(is_project_active)
-        self.arrange_system_button.setEnabled(is_project_active)
-        if hasattr(self, 'close_tables_button'):
-            self.close_tables_button.setEnabled(is_project_active)
+
+        # Кнопки могут отсутствовать в конкретной сборке — включаем/выключаем безопасно
+        for name in ("arrange_tables_button", "arrange_system_button",
+                    "close_tables_button", "sitout_all_button"):
+            if hasattr(self, name):
+                getattr(self, name).setEnabled(is_project_active)
+
+        self._syncing_toggles = True
+        try:
+            for w, val in (
+                (self.automation_toggle, self.is_automation_enabled),
+                (self.auto_record_toggle, self.is_auto_record_enabled),
+                (self.auto_popup_toggle, self.is_auto_popup_closing_enabled),
+                (self.auto_emoji_toggle, self.is_auto_emoji_enabled),
+            ):
+                w.blockSignals(True)
+                if hasattr(w, "setCheckedSilent"):
+                    w.setCheckedSilent(val)
+                else:
+                    w.setChecked(val)
+                w.blockSignals(False)
+        finally:
+            self._syncing_toggles = False
+
 
     def connect_signals(self):
         self.window_manager.log_request.connect(self.log)
@@ -2272,20 +3225,35 @@ class MainWindow(QMainWindow):
         self.update_manager.log_request.connect(self.log)
         self.update_manager.status_update.connect(self.splash.update_status)
         self.update_manager.check_finished.connect(self.show_main_window_and_start_logic)
+        self.update_manager.progress_changed.connect(self.splash.set_progress)
+
 
     def connect_project_signals(self):
-        if not self.current_project: return
-        try:
-            self.automation_toggle.clicked.disconnect()
-            self.auto_record_toggle.clicked.disconnect()
-            self.auto_popup_toggle.clicked.disconnect()
-            self.arrange_tables_button.clicked.disconnect()
-            self.arrange_system_button.clicked.disconnect()
-            if hasattr(self, 'close_tables_button'):
-                self.close_tables_button.clicked.disconnect()
-        except TypeError:
-            pass
+        if not self.current_project:
+            return
+        if hasattr(self, 'sitout_all_button'):
+            try: self.sitout_all_button.clicked.disconnect()
+            except TypeError: pass
 
+
+        # 1) Безопасно отцепляем прошлые обработчики (если были)
+        signals = [
+            getattr(self, 'automation_toggle', None) and self.automation_toggle.clicked,
+            getattr(self, 'auto_record_toggle', None) and self.auto_record_toggle.clicked,
+            getattr(self, 'auto_popup_toggle', None) and self.auto_popup_toggle.clicked,
+            getattr(self, 'arrange_tables_button', None) and self.arrange_tables_button.clicked,
+            getattr(self, 'arrange_system_button', None) and self.arrange_system_button.clicked,
+            getattr(self, 'close_tables_button', None) and self.close_tables_button.clicked,
+            getattr(self, 'auto_emoji_toggle', None) and self.auto_emoji_toggle.clicked,
+        ]
+        for sig in filter(None, signals):
+            try:
+                sig.disconnect()
+            except TypeError:
+                # Было нечего отключать — ок.
+                pass
+
+        # 2) Заново подключаем ВСЕ сигналы, включая автоэмодзи
         self.automation_toggle.clicked.connect(self.toggle_automation)
         self.auto_record_toggle.clicked.connect(self.toggle_auto_record)
         self.auto_popup_toggle.clicked.connect(self.toggle_auto_popup_closing)
@@ -2293,6 +3261,10 @@ class MainWindow(QMainWindow):
         self.arrange_system_button.clicked.connect(self.arrange_other_windows)
         if hasattr(self, 'close_tables_button'):
             self.close_tables_button.clicked.connect(self.close_all_tables)
+        self.auto_emoji_toggle.clicked.connect(self.toggle_auto_emoji)
+        if hasattr(self, 'sitout_all_button'):
+            self.sitout_all_button.clicked.connect(self.sitout_all)
+
 
     def init_timers(self):
         self.timers = {
@@ -2312,16 +3284,20 @@ class MainWindow(QMainWindow):
         self.timers["record_cooldown"].timeout.connect(lambda: setattr(self, 'is_record_stopping', False))
         self.timers["popup_check"].timeout.connect(self.check_for_popups)
         self.timers["uptime_check"].timeout.connect(self.check_system_uptime)
+        self.timers["emoji"] = QTimer(self)
+        self.timers["emoji"].timeout.connect(self.check_auto_emoji)
+        self.timers["emoji"].timeout.connect(self.update_emoji_progress)
+
+
 
     def init_startup_checks(self):
         self.update_window_title()
         threading.Thread(target=self.update_manager.check_for_updates, daemon=True).start()
 
     def show_main_window_and_start_logic(self):
-        self.splash.close()
-        self.build_lobby_ui()
-        self.show()
-        self.position_window_default()
+        # НЕ закрываем сплэш: он и есть «лобби».
+        self.splash.update_status(AppConfig.LOBBY_MSG_SEARCHING)
+        # Главное окно пока не показываем — просто запускаем логику.
         self.start_main_logic()
         QTimer.singleShot(AppConfig.CAMTASIA_SYNC_RESTART_DELAY, self.initial_recorder_sync_check)
 
@@ -2336,24 +3312,46 @@ class MainWindow(QMainWindow):
         self.check_system_uptime()
         self.timers["uptime_check"].start(AppConfig.UPTIME_NAG_CHECK_INTERVAL_MS)
         self.check_admin_rights()
+        if self.is_auto_emoji_enabled:
+            if not self.timers["emoji"].isActive():
+                self.timers["emoji"].start(AppConfig.EMOJI_CHECK_INTERVAL_MS)
+                #self.log(f"{AppConfig.EMOJI_LOG_PREFIX} Таймер активирован (startup).", "info")
+        # подстраховка, если проект уже определён к этому моменту
+        if self.is_automation_enabled and self.current_project and not self.timers["auto_arrange"].isActive():
+            self.timers["auto_arrange"].start(AppConfig.AUTO_ARRANGE_INTERVAL)
+
+
 
     def check_for_player(self):
-        if self.is_sending_logs: return
+        if self.is_sending_logs:
+            return
+
         player_hwnd = self.window_manager.find_first_window_by_title(AppConfig.PLAYER_LAUNCHER_TITLE)
+
         if not player_hwnd:
-            if self.current_project is not None: self.on_project_changed(None)
-            if hasattr(self, 'lobby_status_label'): self.lobby_status_label.setText(AppConfig.LOBBY_MSG_PLAYER_NOT_FOUND)
+            if self.current_project is not None:
+                self.on_project_changed(None)  # вызовет enter_lobby(...)
+
+            # Мягкая формулировка
+            if hasattr(self, "splash") and self.splash:
+                self.splash.update_status(AppConfig.LOBBY_MSG_PLAYER_NOT_FOUND)
+
             if self.player_was_open:
                 self.player_was_open = False
                 self.handle_player_close()
-            elif self.is_automation_enabled:
-                self.check_and_launch_player()
+
+            # ВСЕГДА пробуем запустить плеер
+            self.check_and_launch_player()
+
         else:
             self.player_was_open = True
             project_name = None
             try:
                 title = win32gui.GetWindowText(player_hwnd)
-                project_name = next((short for full, short in AppConfig.PROJECT_MAPPING.items() if f"[{full}]" in title), None)
+                project_name = next(
+                    (short for full, short in AppConfig.PROJECT_MAPPING.items() if f"[{full}]" in title),
+                    None
+                )
             except Exception:
                 project_name = None
 
@@ -2363,12 +3361,15 @@ class MainWindow(QMainWindow):
                     self.log("Авто-старт плеера успешно завершен.", "info")
                 self.on_project_changed(project_name)
             else:
-                if self.current_project is not None: self.on_project_changed(None)
-                if hasattr(self, 'lobby_status_label'): self.lobby_status_label.setText(AppConfig.LOBBY_MSG_WAITING_FOR_LAUNCHER)
-                if self.is_automation_enabled and not self.timers["player_start"].isActive():
+                if self.current_project is not None:
+                    self.on_project_changed(None)
+                if hasattr(self, "splash") and self.splash:
+                    self.splash.update_status(AppConfig.LOBBY_MSG_WAITING_FOR_LAUNCHER)
+
+                if not self.timers["player_start"].isActive():
                     self.log("Лаунчер найден. Запускаюсь...", "info")
                     self.timers["player_start"].start(AppConfig.PLAYER_AUTOSTART_INTERVAL)
-                    self.attempt_player_start_click()
+
         if not self.timers["player_check"].isActive():
             self.timers["player_check"].start(AppConfig.PLAYER_CHECK_INTERVAL)
 
@@ -2438,6 +3439,8 @@ class MainWindow(QMainWindow):
         if not self.is_automation_enabled: return
         self.is_sending_logs = True
         self.log("Плеер закрыт. Отправляю логи...", "info")
+        # Визуально сразу уходим в лобби, чтобы не висел старый UI
+        self.enter_lobby(AppConfig.LOBBY_MSG_PLAYER_NOT_FOUND)
         
         launched_count = 0
         shortcuts_to_launch = []
@@ -2500,17 +3503,39 @@ class MainWindow(QMainWindow):
         if not self.is_automation_enabled:
             self.timers["player_start"].stop()
             return
+
         launcher_hwnd = self.window_manager.find_first_window_by_title(AppConfig.PLAYER_LAUNCHER_TITLE)
         if not launcher_hwnd:
             self.log("Не удалось найти окно лаунчера для авто-старта.", "warning")
             self.timers["player_start"].stop()
             return
+
         try:
             self.focus_window(launcher_hwnd)
-            rect = win32gui.GetWindowRect(launcher_hwnd)
-            x, y = rect[0] + 50, rect[1] + 50
-            self.log("Попытка авто-старта плеера...", "info")
-            self.window_manager.robust_click(x, y, hwnd=launcher_hwnd, log_prefix="PlayerStart")
+            base = getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(__file__)))
+            candidates = [
+                os.path.join(base, AppConfig.TEMPLATES_DIR, "GG", "player_start.png"),
+                os.path.join(base, AppConfig.TEMPLATES_DIR, "QQ", "player_start.png"),
+                os.path.join(base, AppConfig.TEMPLATES_DIR, "player_start.png"),
+                os.path.join(base, AppConfig.TEMPLATES_DIR, "start_button.png"),
+            ]
+
+            # Пытаемся кликнуть по любому из известных шаблонов
+            for tpl in candidates:
+                if os.path.exists(tpl):
+                    if self.window_manager.find_and_click_template(tpl, confidence=0.80, hwnd=launcher_hwnd, log_prefix="[PlayerStart]"):
+                        self.log("Нажал Start в лаунчере.", "info")
+                        QTimer.singleShot(100, self.check_for_player)  # дать времени сменить заголовок с проектом
+                        return
+
+            # Фолбэк: нижняя центральная зона
+            left, top, right, bottom = win32gui.GetWindowRect(launcher_hwnd)
+            x = (left + right) // 2
+            y = bottom - 60
+            self.log("Шаблон кнопки не найден. Пытаюсь клик по запасной точке.", "warning")
+            self.window_manager.robust_click(x, y, hwnd=launcher_hwnd, log_prefix="[PlayerStartFallback]")
+            QTimer.singleShot(800, self.check_for_player)
+
         except Exception as e:
             self.log(f"Не удалось активировать окно плеера: {e}", "error")
 
@@ -2566,27 +3591,45 @@ class MainWindow(QMainWindow):
             QTimer.singleShot(AppConfig.CAMTASIA_SYNC_RESTART_DELAY, self.check_auto_record_logic)
 
     def toggle_auto_record(self):
-        self.is_auto_record_enabled = not self.is_auto_record_enabled
+        if getattr(self, "_syncing_toggles", False):
+            return
+        self.is_auto_record_enabled = self.auto_record_toggle.isChecked()
+        self._settings.setValue("toggles/auto_record", self.is_auto_record_enabled)
         self.log(AppConfig.MSG_AUTO_RECORD_ON if self.is_auto_record_enabled else AppConfig.MSG_AUTO_RECORD_OFF, "info")
+
         if self.is_auto_record_enabled:
             self.timers["auto_record"].start(AppConfig.AUTO_RECORD_INTERVAL)
         else:
             self.timers["auto_record"].stop()
-        self.auto_record_toggle.setChecked(self.is_auto_record_enabled)
 
     def toggle_automation(self):
-        self.is_automation_enabled = not self.is_automation_enabled
+        if getattr(self, "_syncing_toggles", False):
+            return
+        self.is_automation_enabled = self.automation_toggle.isChecked()
+        self._settings.setValue("toggles/automation", self.is_automation_enabled)
         self.log(AppConfig.MSG_AUTOMATION_ON if self.is_automation_enabled else AppConfig.MSG_AUTOMATION_OFF, "info")
+
         if self.is_automation_enabled:
+            # базовые проверки как и раньше
             self.check_for_player()
             self.check_for_recorder()
-        self.automation_toggle.setChecked(self.is_automation_enabled)
+            # НОВОЕ: если проект уже определён — запустим авто-расстановку
+            if self.current_project:
+                if not self.timers["auto_arrange"].isActive():
+                    self.timers["auto_arrange"].start(AppConfig.AUTO_ARRANGE_INTERVAL)
+                self.check_for_new_tables()
+        else:
+            # выключая автоматику — глушим авто-расстановку
+            self.timers["auto_arrange"].stop()
+
+
 
     def toggle_auto_popup_closing(self):
-        self.is_auto_popup_closing_enabled = not self.is_auto_popup_closing_enabled
+        if getattr(self, "_syncing_toggles", False):
+            return
+        self.is_auto_popup_closing_enabled = self.auto_popup_toggle.isChecked()
+        self._settings.setValue("toggles/auto_popup", self.is_auto_popup_closing_enabled)
         self.log(AppConfig.MSG_POPUP_CLOSER_ON if self.is_auto_popup_closing_enabled else AppConfig.MSG_POPUP_CLOSER_OFF, "info")
-        self.auto_popup_toggle.setChecked(self.is_auto_popup_closing_enabled)
-    
     #! РЕФАКТОРИНГ: Основная логика вынесена во вложенные функции
     def check_auto_record_logic(self):
         if not self.is_auto_record_enabled or not self.current_project or self.is_record_stopping:
@@ -2710,12 +3753,15 @@ class MainWindow(QMainWindow):
     def start_recording_session(self):
         self.perform_camtasia_action(AppConfig.ACTION_START)
         config = PROJECT_CONFIGS.get(self.current_project)
-        if not config: return
+        if not config:
+            return
         self.recording_start_time = time.monotonic()
         self.timers["session"].start(AppConfig.SESSION_PROGRESS_UPDATE_INTERVAL)
-        self.progress_bar.setMaximum(config[AppConfig.KEY_SESSION_MAX_S])
-        self.progress_bar.setValue(0)
+        if hasattr(self, "progress_bar"):
+            self.progress_bar.setMaximum(config[AppConfig.KEY_SESSION_MAX_S])
+            self.progress_bar.setValue(0)
         self.update_project_ui_state()
+
 
     def stop_recording_session(self):
         self.perform_camtasia_action(AppConfig.ACTION_STOP)
@@ -2726,19 +3772,27 @@ class MainWindow(QMainWindow):
         self.update_project_ui_state()
 
     def update_session_progress(self):
-        if self.recording_start_time == 0: return
+        if self.recording_start_time == 0:
+            return
         config = PROJECT_CONFIGS.get(self.current_project)
-        if not config or AppConfig.KEY_SESSION_MAX_S not in config: return
+        if not config or AppConfig.KEY_SESSION_MAX_S not in config:
+            return
         elapsed = time.monotonic() - self.recording_start_time
-        self.progress_bar.setValue(elapsed)
-        if elapsed >= config[AppConfig.KEY_SESSION_MAX_S]:
-            self.progress_bar_label.setText(AppConfig.MSG_LIMIT_REACHED)
-            self.progress_bar_label.setStyleSheet(StyleSheet.PROGRESS_BAR_LABEL + f" color: {ColorPalette.RED}; font-weight: bold;")
-            QTimer.singleShot(AppConfig.SESSION_LIMIT_HANDLER_DELAY, self.handle_session_limit_reached)
-        else:
-            remaining_s = max(0, config[AppConfig.KEY_SESSION_MAX_S] - elapsed)
-            self.progress_bar_label.setText(AppConfig.MSG_PROGRESS_LABEL.format(time.strftime('%H:%M:%S', time.gmtime(remaining_s))))
-            self.progress_bar_label.setStyleSheet(StyleSheet.PROGRESS_BAR_LABEL)
+        if hasattr(self, "progress_bar"):
+            self.progress_bar.setValue(elapsed)
+        if hasattr(self, "progress_bar_label"):
+            if elapsed >= config[AppConfig.KEY_SESSION_MAX_S]:
+                self.progress_bar_label.setText(AppConfig.MSG_LIMIT_REACHED)
+                self.progress_bar_label.setStyleSheet(
+                    StyleSheet.PROGRESS_BAR_LABEL + f" color: {ColorPalette.RED}; font-weight: bold;"
+                )
+                QTimer.singleShot(AppConfig.SESSION_LIMIT_HANDLER_DELAY, self.handle_session_limit_reached)
+            else:
+                remaining_s = max(0, config[AppConfig.KEY_SESSION_MAX_S] - elapsed)
+                self.progress_bar_label.setText(
+                    AppConfig.MSG_PROGRESS_LABEL.format(time.strftime('%H:%M:%S', time.gmtime(remaining_s)))
+                )
+                self.progress_bar_label.setStyleSheet(StyleSheet.PROGRESS_BAR_LABEL)
 
     def handle_session_limit_reached(self):
         if self.recording_start_time == 0: return
@@ -2748,18 +3802,36 @@ class MainWindow(QMainWindow):
         QTimer.singleShot(AppConfig.RECORD_RESTART_COOLDOWN_S * 1000 + 1000, self.check_auto_record_logic)
 
     def check_for_new_tables(self):
-        if not self.is_automation_enabled or not self.current_project: return
-        config = PROJECT_CONFIGS.get(self.current_project)
-        if not config: return
-        if self.current_project == AppConfig.PROJECT_GG and not self.window_manager.is_process_running(AppConfig.CLUBGG_PROCESS_NAME):
-            self.last_table_count = 0
+        """Проверяем число столов; при изменении — расставляем и пересчитываем план эмодзи."""
+        if not self.current_project:
             return
-        current_tables = self.window_manager.find_windows_by_config(config, AppConfig.KEY_TABLE, self.winId())
-        current_count = len(current_tables)
+        config = PROJECT_CONFIGS.get(self.current_project)
+        if not config or AppConfig.KEY_TABLE not in config:
+            return
+
+        found = self.window_manager.find_windows_by_config(config, AppConfig.KEY_TABLE, int(self.winId()))
+        current_count = len(found)
+
         if current_count != self.last_table_count:
-            self.log(f"Изменилось количество столов: {self.last_table_count} -> {current_count}. Перерасстановка...", "info")
+            self.log(f"Изменилось количество столов: {self.last_table_count} → {current_count}", "info")
+            self.last_table_count = current_count
             QTimer.singleShot(AppConfig.TABLE_ARRANGE_ON_CHANGE_DELAY, self.arrange_tables)
-        self.last_table_count = current_count
+
+            # Перепланируем эмодзи только при изменении числа столов
+            if self.is_auto_emoji_enabled:
+                if self._next_emoji_due_ts > 0:
+                    # Текущий дедлайн трогаем НЕ будем. Пересчитаем период на следующий цикл.
+                    new_delay = self._compute_emoji_period(current_count)
+                    self._emoji_next_period_s = new_delay
+                    self._log_mt(
+                        f"{AppConfig.EMOJI_LOG_PREFIX} Изменились столы "
+                        f"(→ {current_count}). Новый период на СЛЕДУЮЩИЙ цикл: ~{int(new_delay)}с.",
+                        "info"
+                    )
+                else:
+                    # Если расписания ещё нет (напр., только включили тумблер) — спланируем сразу
+                    self._schedule_next_emoji(reason="tables_changed_idle")
+
 
     def arrange_tables(self):
         if not self.current_project:
@@ -2920,12 +3992,19 @@ class MainWindow(QMainWindow):
                 if win32gui.IsIconic(recorder_hwnd):
                     win32gui.ShowWindow(recorder_hwnd, win32con.SW_RESTORE)
                     time.sleep(AppConfig.ROBUST_CLICK_ACTIVATION_DELAY)
-                screen_rect = self.get_current_screen().availableGeometry()
-                rect = win32gui.GetWindowRect(recorder_hwnd)
-                w, h = rect[2] - rect[0], rect[3] - rect[1]
-                x = screen_rect.left() + (screen_rect.width() - w) // 2
-                y = screen_rect.bottom() - h
-                win32gui.MoveWindow(recorder_hwnd, x, y, w, h, True)
+                # Размеры окна
+                left, top, right, bottom = win32gui.GetWindowRect(recorder_hwnd)
+                w, h = right - left, bottom - top
+
+                if self.current_project == AppConfig.PROJECT_QQ:
+                    # Требуемая фиксированная позиция для QQ
+                    win32gui.MoveWindow(recorder_hwnd, 1400, 805, w, h, True)
+                else:
+                    # Старое поведение: по низу активного экрана
+                    screen_rect = self.get_current_screen().availableGeometry()
+                    x = screen_rect.left() + (screen_rect.width() - w) // 2
+                    y = screen_rect.bottom() - h
+                    win32gui.MoveWindow(recorder_hwnd, x, y, w, h, True)
             except Exception as e:
                 self.log(f"Ошибка позиционирования Camtasia: {e}", "error")
 
@@ -2941,14 +4020,61 @@ class MainWindow(QMainWindow):
         if not self.current_project:
             self.log(AppConfig.MSG_PROJECT_UNDEFINED, "error")
             return
+
         self.log(f"Закрываю все столы для проекта {self.current_project}...", "info")
         config = PROJECT_CONFIGS.get(self.current_project)
-        if not config: return
-        found_windows = self.window_manager.find_windows_by_config(config, AppConfig.KEY_TABLE, int(self.winId()))
-        if not found_windows:
+        if not config:
+            return
+
+        # Найдём окна столов по конфигу
+        windows = self.window_manager.find_windows_by_config(
+            config, AppConfig.KEY_TABLE, int(self.winId())
+        )
+        if not windows:
             self.log("Столы для закрытия не найдены.", "warning")
             return
-        closed_count = sum(1 for hwnd in found_windows if self.window_manager.close_window(hwnd))
+
+        # Для GG страхуемся: берём только окна clubgg.exe (как в arrange_gg_tables)
+        if self.current_project == AppConfig.PROJECT_GG:
+            gg_hwnds = []
+            for hwnd in windows:
+                try:
+                    _, pid = win32process.GetWindowThreadProcessId(hwnd)
+                    h = win32api.OpenProcess(win32con.PROCESS_QUERY_INFORMATION | win32con.PROCESS_VM_READ, False, pid)
+                    proc = os.path.basename(win32process.GetModuleFileNameEx(h, 0))
+                    win32api.CloseHandle(h)
+                    if proc.lower() == AppConfig.CLUBGG_PROCESS_NAME:
+                        gg_hwnds.append(hwnd)
+                except Exception:
+                    continue
+            if gg_hwnds:
+                windows = gg_hwnds  # если нашли — используем их
+
+        # Если GG — закрываем ступенчато, чтобы не было «залпа»
+        if self.current_project == AppConfig.PROJECT_GG:
+            step_ms = getattr(AppConfig, "CLOSE_TABLES_STEP_DELAY_MS", 330)
+            idx = 0
+            closed = 0
+
+            def _step():
+                nonlocal idx, closed
+                if idx >= len(windows):
+                    if closed > 0:
+                        self.log(f"Закрыто столов: {closed}", "info")
+                    return
+                hwnd = windows[idx]
+                idx += 1
+                if win32gui.IsWindow(hwnd):
+                    if self.window_manager.close_window(hwnd):
+                        closed += 1
+                # планируем следующий WM_CLOSE через ~0.33 c
+                QTimer.singleShot(step_ms, _step)
+
+            QTimer.singleShot(0, _step)  # стартуем цепочку, UI не блокируется
+            return
+
+        # Для остальных проектов — как было (мгновенно)
+        closed_count = sum(1 for hwnd in windows if self.window_manager.close_window(hwnd))
         if closed_count > 0:
             self.log(f"Закрыто столов: {closed_count}", "info")
 
@@ -3091,7 +4217,6 @@ def _enable_dpi_awareness():
         except Exception:
             pass
 
-#! НОВОЕ: Настройка логирования в файл
 def setup_logging():
     """Настраивает систему логирования для записи в файл и вывода в консоль."""
     log_dir = os.path.join(os.getenv('APPDATA'), AppConfig.LOG_DIR_NAME)
@@ -3099,26 +4224,21 @@ def setup_logging():
     log_file = os.path.join(log_dir, AppConfig.LOG_FILE_NAME)
 
     log_level = logging.DEBUG if AppConfig.DEBUG_MODE else logging.INFO
-    
-    # Создаем обработчики
+
     console_handler = logging.StreamHandler(sys.stdout)
     file_handler = logging.handlers.RotatingFileHandler(
         log_file, maxBytes=5*1024*1024, backupCount=2, encoding='utf-8'
     )
-    
-    # Создаем форматтер
-    formatter = logging.Formatter(
-        '%(asctime)s - %(levelname)s - [%(threadName)s:%(funcName)s] - %(message)s'
-    )
+
+    formatter = logging.Formatter('%(asctime)s - %(levelname)s - [%(threadName)s:%(funcName)s] - %(message)s')
     console_handler.setFormatter(formatter)
     file_handler.setFormatter(formatter)
-    
-    # Настраиваем корневой логгер
+
     root_logger = logging.getLogger()
     root_logger.setLevel(log_level)
     root_logger.addHandler(console_handler)
     root_logger.addHandler(file_handler)
-    
+
     logging.info("="*50)
     logging.info(f"Логирование настроено. Уровень: {logging.getLevelName(log_level)}. Файл: {log_file}")
     logging.info(f"Версия OiHelper: {AppConfig.CURRENT_VERSION}")
@@ -3169,6 +4289,7 @@ if __name__ == '__main__':
     app = QApplication(sys.argv)
     splash = SplashScreen()
     splash.show()
+    splash.center_on_screen()
 
     app.setWindowIcon(QIcon(icon_path))
 
