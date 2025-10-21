@@ -1,0 +1,12 @@
+
+@echo off
+rem тут ниже визуализация процесса
+chcp 65001 >nul
+
+set "ACCOUNT=HoserAce"
+set "DURATION=4:15"
+set "TITLE=Запуск аккаунта"
+set "MESSAGE=Аккаунт запускается. Не запускайте повторно."
+set "TOPMOST=1"
+
+call "C:\Users\Administrator\Desktop\ARCHIVE\Vater-v\starter.bat"

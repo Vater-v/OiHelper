@@ -12,6 +12,7 @@ import logging
 import ctypes
 import shutil
 from ctypes import wintypes, windll
+import platform
 import queue
 import random
 import math
@@ -74,6 +75,7 @@ from PyQt6.QtSvg import QSvgRenderer
 _user32 = ctypes.windll.user32
 _user32.AttachThreadInput.argtypes = [wintypes.DWORD, wintypes.DWORD, wintypes.BOOL]
 _user32.AttachThreadInput.restype  = wintypes.BOOL
+MACHINE_TAG = os.environ.get("COMPUTER_TAG") or os.environ.get("COMPUTERNAME") or platform.node() or "Unknown"
 
 # --- WinAPI compat shims ---
 from ctypes import sizeof, c_void_p, c_ulong, c_ulonglong
@@ -92,18 +94,27 @@ except AttributeError:
 try:
     import win32con
 except ImportError:
-    # Создадим заглушки, если win32con не установлен,
-    # чтобы код оставался синтаксически верным.
-    class Win32ConMock:
-        VK_F9 = 0x78
-        VK_F10 = 0x79
-    win32con = Win32ConMock()
+    class win32con:
+        # клавиши
+        VK_F9 = 0x78; VK_F10 = 0x79; VK_MENU = 0x12
+        KEYEVENTF_KEYUP = 0x0002
+        # окна/показы
+        SW_RESTORE = 9; SW_MINIMIZE = 6
+        SWP_NOMOVE = 0x0002; SWP_NOSIZE = 0x0001; SWP_NOACTIVATE = 0x0010; SWP_SHOWWINDOW = 0x0040
+        HWND_TOPMOST = -1; HWND_NOTOPMOST = -2
+        WM_CLOSE = 0x0010; GA_ROOT = 2
+        # процессы
+        PROCESS_QUERY_INFORMATION = 0x0400; PROCESS_VM_READ = 0x0010
+        # System Metrics
+        SM_CXSCREEN = 0; SM_CYSCREEN = 1
+        SM_XVIRTUALSCREEN = 76; SM_YVIRTUALSCREEN = 77; SM_CXVIRTUALSCREEN = 78; SM_CYVIRTUALSCREEN = 79
+
 
 class AppConfig:
     """Централизованная конфигурация приложения с ускоренными задержками."""
     # --- Общие настройки приложения ---
     DEBUG_MODE = False
-    CURRENT_VERSION = "8.20"
+    CURRENT_VERSION = "8.39"
     MUTEX_NAME = "OiHelperMutex"
     APP_TITLE_TEMPLATE = "OiHelper v{version}"
     ICON_PATH = 'icon.ico'
@@ -147,6 +158,21 @@ class AppConfig:
     CAMTASIA_WINDOW_TITLES = ["Camtasia", "Recording...", "Paused..."]
     CAMTASIA_WINDOW_TITLE_RECORDING = "recording..."
     CAMTASIA_WINDOW_TITLE_PAUSED = "paused..."
+
+
+    # --- WU/TPuke ---
+    WU_RUN_WUKONG_TITLE_KEYWORD = "run_wukong"
+    WU_RUN_WUKONG_SHORTCUT_KEYWORD = "run_wukong"
+    WU_RUN_WUKONG_LAUNCH_COOLDOWN_S = 15
+
+    DNPLAYER_PROCESS_NAME = "dnplayer.exe"
+    DNMULTIPLAYER_PROCESS_NAME = "dnmultiplayer.exe"
+    LDMULTIPLAYER_WINDOW_TITLE = "LDMultiPlayer"
+    LDMULTIPLAYER_SHORTCUT_KEYWORDS = ("LDMultiPlayer", "dnmultiplayer")
+
+    # Координаты для LDMultiPlayer (сохраняем размер)
+    LDMULTI_LEFT = 1291
+    LDMULTI_TOP  = 0
 
     # --- Временные интервалы (в миллисекундах, если не указано иное) ---
     PLAYER_CHECK_INTERVAL = 250                 # Было: 700
@@ -249,10 +275,10 @@ class AppConfig:
     MSG_AUTO_RECORD_OFF = "Автозапись выключена."
     MSG_AUTOMATION_ON = "Автоматика включена."
     MSG_AUTOMATION_OFF = "Автоматика выключена."
-    MSG_POPUP_CLOSER_ON = "Автозакрытие спама (beta) включено."
-    MSG_POPUP_CLOSER_OFF = "Автозакрытие спама (beta) выключено."
+    MSG_POPUP_CLOSER_ON = "Автозакрытие спама включено."
+    MSG_POPUP_CLOSER_OFF = "Автозакрытие спама выключено."
     MSG_TG_HELPER_STARTED = f"OiHelper {CURRENT_VERSION} запущен."
-    MSG_TG_CRITICAL_ERROR = "OiHelper Критическая ошибка: {}"
+    MSG_TG_CRITICAL_ERROR = f"OiHelper [{MACHINE_TAG}] Критическая ошибка: {{}}"
     MSG_SITOUT_ALL = "Ситаут везде"
 
     # --- Системные и WinAPI константы ---
@@ -289,6 +315,10 @@ class AppConfig:
     SITOUT_DIR_NAME = "sitout"        # templates/GG/sitout/*.png (и fallback: sitout*.png в корне проекта)
     SITOUT_COOLDOWN_S = 2   # антиспам: повтор не чаще, чем раз в 12 секунд
 
+    # NEW:
+    SITOUT_ENTER_KEYWORDS = ("sitout",)           # темплейты входа в ситаут
+    SITOUT_EXIT_KEYWORDS  = ("sitin", "return")   # темплейты возврата из ситаута
+
 
     # --- Пути к файлам и ключевые слова ---
     LOG_SENDER_KEYWORDS = ["endsess", "logbot"]
@@ -306,6 +336,7 @@ class AppConfig:
     KEY_TABLE = "TABLE"
     KEY_LOBBY = "LOBBY"
     KEY_PLAYER = "PLAYER"
+    KEY_RECORDER = "RECORDER"
     KEY_CV_SERVER = "CV_SERVER"
     KEY_FIND_METHOD = "FIND_METHOD"
     KEY_TITLE = "TITLE"
@@ -341,7 +372,7 @@ class AppConfig:
     ACTION_RESUME = "resume"
 
     # --- Проекты ---
-    PROJECT_MAPPING = {"QQPoker": PROJECT_QQ, "ClubGG": PROJECT_GG, "WUPoker": PROJECT_WU}
+    PROJECT_MAPPING = {"QQPoker": PROJECT_QQ, "ClubGG": PROJECT_GG, "TPuke": PROJECT_WU}
 
 AppConfig.DEBUG_MODE = True
 # ---- РЕЗОЛВЕР РЕСУРСОВ (иконки/картинки) ----
@@ -734,22 +765,29 @@ PROJECT_CONFIGS = {
             }
         }
     },
-    AppConfig.PROJECT_WU: {
-        AppConfig.KEY_PLAYER: {
-            AppConfig.KEY_X: 1400,
-            AppConfig.KEY_Y: 900,
-            AppConfig.KEY_WIDTH: 724,
-            AppConfig.KEY_HEIGHT: 370
-        },
-            AppConfig.KEY_EXCLUDED_TITLES: ["OiHelper", "NekoRay", "NekoBox", "Chrome", "Sandbo", "Notepad", "Explorer"],
-            AppConfig.KEY_EXCLUDED_PROCESSES: ["explorer.exe", "svchost.exe"],
-            AppConfig.KEY_SESSION_MAX_S: 3 * 3600,
-            AppConfig.KEY_SESSION_WARN_S: -1,
-            AppConfig.KEY_ARRANGE_MINIMIZED: True,
-            AppConfig.KEY_POPUPS: {
-                # Если нужно - добавь обработку попапов
-            }
-    }
+AppConfig.PROJECT_WU: {
+    AppConfig.KEY_RECORDER: {
+    AppConfig.KEY_X: 1200,
+    AppConfig.KEY_Y: 700
+},
+
+    AppConfig.KEY_SESSION_MAX_S: 12600,
+
+    AppConfig.KEY_TABLE: {
+        AppConfig.KEY_TITLE: "TPuke",
+        AppConfig.KEY_FIND_METHOD: AppConfig.FIND_METHOD_TITLE_AND_SIZE,
+        AppConfig.KEY_WIDTH: 320,
+        AppConfig.KEY_HEIGHT: 600,
+        # увеличили допуск до 35 пикселей
+        AppConfig.KEY_TOLERANCE: 50,
+    },
+    AppConfig.KEY_PLAYER: {
+        # плеер должен стоять по координатам:
+        AppConfig.KEY_X: 1388, AppConfig.KEY_Y: 904,
+        AppConfig.KEY_WIDTH: 684, AppConfig.KEY_HEIGHT: 370
+    },
+},
+
 }
 
 
@@ -1206,12 +1244,15 @@ def ensure_camtasia_position_for_project(project: str) -> bool:
     hwnd = find_camtasia_window()
     if not hwnd:
         return False
-    if project == AppConfig.PROJECT_QQ:
-        # Требование: всегда в (1400, 805) для QQ
+    cfg = PROJECT_CONFIGS.get(project, {}).get(AppConfig.KEY_RECORDER, {})
+    x = cfg.get(AppConfig.KEY_X)
+    y = cfg.get(AppConfig.KEY_Y)
+    if isinstance(x, int) and isinstance(y, int):
+        return move_camtasia_to(hwnd, x, y)
+    # fallback: старое поведение
+    if project in (AppConfig.PROJECT_QQ, AppConfig.PROJECT_WU):
         return move_camtasia_to(hwnd, 1400, 805)
-    else:
-        # Остальные проекты — как было
-        return move_camtasia_to_bottom_right(hwnd)
+    return move_camtasia_to_bottom_right(hwnd)
 
 
 class ToggleSwitch(QPushButton):
@@ -1308,8 +1349,7 @@ class Notification(QWidget):
         layout.addWidget(text_label, 1)
         self.setFixedWidth(AppConfig.NOTIFICATION_WIDTH)
 
-        self.opacity = 0.0
-        self.setWindowOpacity(self.opacity)
+        self.setWindowOpacity(0.0)
 
         self.fade_in_timer = QTimer(self)
         self.fade_in_timer.timeout.connect(self.fade_in)
@@ -1317,25 +1357,52 @@ class Notification(QWidget):
         self.fade_out_timer.timeout.connect(self.fade_out)
         QTimer.singleShot(AppConfig.NOTIFICATION_DURATION, self.start_fade_out)
 
+
     def fade_in(self):
-        self.opacity += 0.1
-        self.setWindowOpacity(min(self.opacity, 1.0))
-        if self.opacity >= 1.0: self.fade_in_timer.stop()
+        try:
+            cur = float(self.windowOpacity())
+            new = min(cur + 0.1, 1.0)
+            self.setWindowOpacity(new)
+            if new >= 1.0:
+                t = getattr(self, "fade_in_timer", None)
+                if t: t.stop()
+        except Exception:
+            # не даём событию убить приложение
+            pass
 
     def fade_out(self):
-        self.opacity -= 0.1
-        self.setWindowOpacity(max(self.opacity, 0.0))
-        if self.opacity <= 0.0: self.fade_out_timer.stop(); self.close()
+        try:
+            cur = float(self.windowOpacity())
+            new = max(cur - 0.1, 0.0)
+            self.setWindowOpacity(new)
+            if new <= 0.0:
+                t = getattr(self, "fade_out_timer", None)
+                if t: t.stop()
+                self.close()
+        except Exception:
+            try:
+                t = getattr(self, "fade_out_timer", None)
+                if t: t.stop()
+            finally:
+                self.close()
+
+    def start_fade_out(self):
+        if self.is_closing:
+            return
+        self.is_closing = True
+        t_in = getattr(self, "fade_in_timer", None)
+        if t_in: t_in.stop()
+        t_out = getattr(self, "fade_out_timer", None)
+        if t_out:
+            t_out.start(AppConfig.NOTIFICATION_FADE_INTERVAL)
+        else:
+            # подстраховка, если не успели создать таймер
+            self.close()
+
 
     def show_animation(self):
         self.show()
         self.fade_in_timer.start(AppConfig.NOTIFICATION_FADE_INTERVAL)
-
-    def start_fade_out(self):
-        if self.is_closing: return
-        self.is_closing = True
-        self.fade_in_timer.stop()
-        self.fade_out_timer.start(AppConfig.NOTIFICATION_FADE_INTERVAL)
 
     def closeEvent(self, event):
         self.closed.emit(self)
@@ -1662,6 +1729,7 @@ class WindowManager(QObject):
     # =============================
     # Поиск окон
     # =============================
+
     #! ИСПРАВЛЕНО: Добавлен try...finally для гарантированного закрытия хендла
     def find_first_window_by_process_name(self, process_name_to_find: str, check_visible: bool = True) -> Optional[int]:
         hwnds = []
@@ -1755,6 +1823,11 @@ class WindowManager(QObject):
             self._send_mouse_input(AppConfig.MOUSEEVENTF_LEFTDOWN)
             time.sleep(AppConfig.ROBUST_CLICK_MOUSE_DOWN_DELAY)
             self._send_mouse_input(AppConfig.MOUSEEVENTF_LEFTUP)
+            try:
+                self.click_visual_request.emit(int(tx), int(ty))
+            except Exception:
+                pass
+
 
             logging.info(f"{log_prefix} robust_click: Клик выполнен по ({tx},{ty}) с hwnd={hwnd}")
             return True
@@ -1772,32 +1845,87 @@ class WindowManager(QObject):
     # =============================
     # OpenCV-шаблоны (без изменений, как у тебя)
     # =============================
-    def find_template(self, template_path: str, confidence=AppConfig.DEFAULT_CV_CONFIDENCE) -> Optional[Tuple[int, int]]:
+    def find_template(
+        self,
+        template_path: str,
+        confidence=AppConfig.DEFAULT_CV_CONFIDENCE,
+        *,                      # новые именованные параметры для совместимости
+        hwnd: int | None = None,
+        return_center: bool = True,
+        log_prefix: str = "[find_template]"
+    ):
+        """
+        Возвращает:
+        — (cx, cy) | None  — если вызвано по-старому (без именованных аргументов)
+        — (found: bool, box_or_center, score: float) — если переданы именованные args
+        Координаты корректируются под виртуальный экран (vx, vy) и возможный масштаб скриншота.
+        """
         if not CV2_AVAILABLE or not PYAUTOGUI_AVAILABLE:
             logging.warning("find_template: CV2 или PyAutoGUI недоступны.")
-            return None
+            return None if (hwnd is None and log_prefix == "[find_template]") else (False, None, 0.0)
         try:
-            template = cv2.imread(template_path, cv2.IMREAD_GRAYSCALE)
-            if template is None:
-                if os.path.exists(template_path): logging.error(f"Не удалось загрузить шаблон: {template_path}")
-                return None
+            tpl_gray = cv2.imread(template_path, cv2.IMREAD_GRAYSCALE)
+            if tpl_gray is None:
+                if os.path.exists(template_path):
+                    logging.error(f"{log_prefix} Не удалось загрузить шаблон: {template_path}")
+                return None if (hwnd is None and log_prefix == "[find_template]") else (False, None, 0.0)
 
-            screenshot = pyautogui.screenshot()
-            screen_cv = cv2.cvtColor(np.array(screenshot), cv2.COLOR_RGB2GRAY)
+            shot = pyautogui.screenshot()
+            img = cv2.cvtColor(np.array(shot), cv2.COLOR_RGB2GRAY)
 
-            res = cv2.matchTemplate(screen_cv, template, cv2.TM_CCOEFF_NORMED)
+            res = cv2.matchTemplate(img, tpl_gray, cv2.TM_CCOEFF_NORMED)
             _, max_val, _, max_loc = cv2.minMaxLoc(res)
 
-            if max_val >= confidence:
-                w, h = template.shape[::-1]
-                return (max_loc[0] + w // 2, max_loc[1] + h // 2)
+            if max_val < float(confidence):
+                return None if (hwnd is None and log_prefix == "[find_template]") else (False, None, float(max_val))
+
+            img_h, img_w = img.shape[:2]
+            tpl_h, tpl_w = tpl_gray.shape[:2]
+
+            # Коррекция под виртуальный экран и возможное несовпадение размеров скриншота
+            vx, vy, vw, vh = getattr(self, "vx", 0), getattr(self, "vy", 0), getattr(self, "vw", img_w), getattr(self, "vh", img_h)
+            sx = vw / img_w if img_w else 1.0
+            sy = vh / img_h if img_h else 1.0
+
+            left = int(vx + max_loc[0] * sx)
+            top  = int(vy + max_loc[1] * sy)
+            w    = int(tpl_w * sx)
+            h    = int(tpl_h * sy)
+            cx   = left + w // 2
+            cy   = top  + h // 2
+
+            # Режим совместимости (старые вызовы ожидают только (cx, cy) либо None)
+            if hwnd is None and log_prefix == "[find_template]":
+                return (cx, cy)
+
+            if return_center:
+                box_or_center = (cx, cy)
             else:
-                logging.debug(f"Шаблон '{os.path.basename(template_path)}' не найден (уверенность: {max_val:.2f})")
-                return None
+                box_or_center = (left, top, left + w, top + h)
+
+            return True, box_or_center, float(max_val)
         except Exception as e:
-            logging.error(f"Ошибка при поиске шаблона '{template_path}'", exc_info=True)
-            self.log_request.emit(f"Ошибка OpenCV: {e}", "error")
-            return None
+            logging.error(f"{log_prefix} Ошибка в find_template: {e}", exc_info=True)
+            return None if (hwnd is None and log_prefix == "[find_template]") else (False, None, 0.0)
+
+    def find_template_multi(self, screen_gray, template_path: str, confidence=AppConfig.DEFAULT_CV_CONFIDENCE, dedup_px=18):
+        if not CV2_AVAILABLE:
+            return []
+        tpl = cv2.imread(template_path, cv2.IMREAD_GRAYSCALE)
+        if tpl is None:
+            return []
+        res = cv2.matchTemplate(screen_gray, tpl, cv2.TM_CCOEFF_NORMED)
+        ys, xs = np.where(res >= confidence)
+        h, w = tpl.shape[:2]
+        vx, vy = getattr(self, "vx", 0), getattr(self, "vy", 0)
+        pts = [(int(x + w / 2 + vx), int(y + h / 2 + vy)) for x, y in zip(xs, ys)]
+        # простой дедуп по расстоянию (без NMS)
+        dedup = []
+        for cx, cy in pts:
+            if all(abs(cx - x) > dedup_px or abs(cy - y) > dedup_px for x, y in dedup):
+                dedup.append((cx, cy))
+        return dedup
+
 
     def find_and_click_template(self, template_path: str, confidence=AppConfig.DEFAULT_CV_CONFIDENCE, hwnd: int = None, log_prefix: str = "") -> bool:
         coords = self.find_template(template_path, confidence)
@@ -1940,10 +2068,14 @@ class TelegramNotifier(QObject):
         super().__init__()
         self.token = token
         self.chat_id = chat_id
-        self.api_url = f"https://api.telegram.org/bot{self.token}/sendMessage"
-        self.message_queue = queue.Queue()
-        self.worker_thread = threading.Thread(target=self._worker, daemon=True)
-        self.worker_thread.start()
+        self._warn_missing_config_logged = False   # << добавить
+        self.api_url = "https://api.telegram.org"
+    def send_message(self, message: str):
+        if not self.token or not self.chat_id:
+            if not self._warn_missing_config_logged:
+                logging.warning("Токен или ID чата Telegram не настроены (покажу один раз).")
+                self._warn_missing_config_logged = True
+            return
 
     def send_message(self, message: str):
         if not self.token or not self.chat_id:
@@ -1964,6 +2096,55 @@ class TelegramNotifier(QObject):
                 logging.error(f"Не удалось отправить сообщение в Telegram: {e}")
             finally:
                 self.message_queue.task_done()
+
+def find_first_window_by_proc_and_title(proc_name: str,
+                                        title_substr: str,
+                                        check_visible: bool = True) -> Optional[int]:
+    """
+    HWND окна, где имя процесса содержит proc_name и заголовок содержит title_substr.
+    check_visible=True — учитывать только видимые/несвёрнутые; False — любые (в т.ч. свёрнутые).
+    Устойчиво к исчезающим окнам и багам EnumWindows.
+    """
+    proc = (proc_name or "").lower()
+    needle = (title_substr or "").lower()
+    found = None
+
+    def cb(hwnd, _):
+        nonlocal found
+        try:
+            if not win32gui.IsWindow(hwnd) or not win32gui.IsWindowEnabled(hwnd):
+                return True
+            if check_visible and (not win32gui.IsWindowVisible(hwnd) or win32gui.IsIconic(hwnd)):
+                return True
+
+            _, pid = win32process.GetWindowThreadProcessId(hwnd)
+            h = None
+            try:
+                h = win32api.OpenProcess(
+                    win32con.PROCESS_QUERY_INFORMATION | win32con.PROCESS_VM_READ, False, pid
+                )
+                pname = os.path.basename(win32process.GetModuleFileNameEx(h, 0)).lower()
+            except Exception:
+                return True
+            finally:
+                if h:
+                    try: win32api.CloseHandle(h)
+                    except Exception: pass
+
+            title = (win32gui.GetWindowText(hwnd) or "").lower()
+            if (proc in pname) and (needle in title):
+                found = hwnd
+                return False
+        except Exception:
+            return True
+        return True
+
+    try:
+        win32gui.EnumWindows(cb, None)
+    except Exception as e:
+        logging.debug("EnumWindows failed in find_first_window_by_proc_and_title: %s", e)
+    return found
+
 
 #! ИСПРАВЛЕНО: Добавлен try...finally для гарантированного закрытия хендла
 def find_camtasia_window() -> Optional[int]:
@@ -2244,6 +2425,10 @@ class MainWindow(QMainWindow):
         self._emoji_period_s = 0.0
         self._emoji_next_period_s = 0.0   # следующий период, применится после текущего дедлайна
         self._sitout_last_ts = 0.0
+        self._wu_allow_ldm_position = False  # разрешение разовой расстановки LDMulti для WU
+        self._wu_last_spam_click_ts = 0.0    # анти-даблклик для закрытия спама (WU)
+
+
 
 
 
@@ -2270,6 +2455,105 @@ class MainWindow(QMainWindow):
         self._uptime_snoozed_until = 0.0  # monotonic seconds
         self._uptime_kill_done = False
         self.setWindowIcon(QIcon(icon_path))
+        
+
+    def _ensure_run_wukong_running(self):
+        # 1) Любое окно с нужным заголовком (видимое/свернутое) — считаем запущенным
+        hwnd = self.window_manager.find_first_window_by_title(
+            AppConfig.WU_RUN_WUKONG_TITLE_KEYWORD, exact_match=False, check_visible=False
+        )
+        if not hwnd:
+            # 2) Доп. проверка по процессу + заголовку (устойчивее к разным консолям)
+            hwnd = find_first_window_by_proc_and_title(
+                "cmd.exe", AppConfig.WU_RUN_WUKONG_TITLE_KEYWORD, check_visible=False
+            )
+        if hwnd:
+            return True
+
+        # 3) Жёсткий анти-дубль: если уже идёт запуск — выходим
+        if getattr(self, "_wu_wukong_launching", False):
+            return False
+
+        # 4) Антиспам по времени
+        now = time.monotonic()
+        last = getattr(self, "_wu_last_wukong_launch", 0.0)
+        if now - last < getattr(AppConfig, "WU_RUN_WUKONG_LAUNCH_COOLDOWN_S", 15):
+            return False
+
+        sc = find_desktop_shortcut(AppConfig.WU_RUN_WUKONG_SHORTCUT_KEYWORD)
+        if not sc:
+            logging.warning("[WU] Ярлык run_wukong не найден на рабочем столе.")
+            return False
+
+        try:
+            self._wu_wukong_launching = True
+            os.startfile(sc)
+            self._wu_last_wukong_launch = now
+            logging.info("[WU] Запуск run_wukong по ярлыку: %s", sc)
+            # Сбрасываем флаг немного позже, чтобы параллельные таймеры не успели запустить второй раз
+            QTimer.singleShot(3000, lambda: setattr(self, "_wu_wukong_launching", False))
+        except Exception as e:
+            self._wu_wukong_launching = False
+            logging.error("[WU] Ошибка запуска run_wukong: %s", e)
+        return False
+
+    def _reposition_hwnd_keep_size(self, hwnd: int, x: int, y: int):
+        try:
+            l,t,r,b = win32gui.GetWindowRect(hwnd)
+            w,h = r-l, b-t
+            win32gui.SetWindowPos(hwnd, win32con.HWND_TOP, x, y, w, h,
+                                win32con.SWP_SHOWWINDOW)
+        except Exception as e:
+            logging.error("[WU] Не удалось переместить окно: %s", e)
+
+    def _ensure_ldmultiplayer_present(self):
+        """Запуск и возврат LDMultiPlayer на позицию (1291,0). Если свернут — не трогаем."""
+        # Пытаемся найти по заголовку (быстрее/надежнее для менеджера)
+        hwnd = self.window_manager.find_first_window_by_title(AppConfig.LDMULTIPLAYER_WINDOW_TITLE, exact_match=False)
+        if not hwnd:
+            # Проверим по процессу, вдруг есть
+            hwnd = self.window_manager.find_first_window_by_process_name(AppConfig.DNMULTIPLAYER_PROCESS_NAME)
+        if not hwnd:
+            # Пытаемся запустить через ярлык
+            for key in AppConfig.LDMULTIPLAYER_SHORTCUT_KEYWORDS:
+                sc = find_desktop_shortcut(key)
+                if sc:
+                    now = time.monotonic()
+                    last = getattr(self, "_wu_last_ldm_launch", 0.0)
+                    if now - last < AppConfig.WU_LDMULTI_LAUNCH_COOLDOWN_S:
+                        return False
+                    try:
+                        os.startfile(sc)
+                        self._wu_last_ldm_launch = now
+                        logging.info("[WU] Запуск LDMulti по ярлыку: %s", sc)
+                    except Exception as e:
+                        logging.error("[WU] Ошибка запуска LDMulti: %s", e)
+                    return False
+
+            # Повторный поиск окна
+            hwnd = self.window_manager.find_first_window_by_title(AppConfig.LDMULTIPLAYER_WINDOW_TITLE, exact_match=False)
+
+        if not hwnd:
+            return
+
+        # Если свернуто — уважительно игнорируем
+        try:
+            if win32gui.IsIconic(hwnd):
+                return
+        except Exception:
+            pass
+
+        # Возвращаем на (1291, 0), не меняя размер
+        self._reposition_hwnd_keep_size(hwnd, AppConfig.LDMULTI_LEFT, AppConfig.LDMULTI_TOP)
+
+    def _ensure_wu_environment(self):
+        """Для WU: только гарантируем запуск сервисов; LDMulti двигаем ТОЛЬКО если это явно разрешено флагом."""
+        try:
+            self._ensure_run_wukong_running()  # запуск/проверка консоли run_wukong
+            if getattr(self, "_wu_allow_ldm_position", False):
+                self._ensure_ldmultiplayer_present()  # разовая расстановка LDMulti
+        except Exception as e:
+            self.log(f"Ошибка в ensure_wu_environment: {e}", "error")
 
 
     def update_emoji_progress(self):
@@ -2281,7 +2565,10 @@ class MainWindow(QMainWindow):
             if (not self.is_auto_emoji_enabled
                 or self._next_emoji_due_ts <= 0
                 or self._emoji_period_s <= 0):
-                bar.setMaximum(1.0); bar.setValue(0.0); lbl.setText("Эмоция через: —"); return
+                bar.setMaximum(1.0)
+                bar.setValue(0.0)
+                lbl.setText("Эмоция через: —")
+                return
             now = time.monotonic()
             remaining = max(0.0, self._next_emoji_due_ts - now)
             elapsed = max(0.0, self._emoji_period_s - remaining)
@@ -2289,10 +2576,8 @@ class MainWindow(QMainWindow):
             bar.setValue(elapsed)
             lbl.setText("Эмоция через: " + time.strftime('%H:%M:%S', time.gmtime(int(remaining))))
         except RuntimeError:
-            # Виджет удалён между тиками — тихо выходим
+            # Виджет могли удалить между тиками
             return
-
-
 
     def closeEvent(self, event):
         logging.info("Приложение закрывается, остановка таймеров...")
@@ -2351,69 +2636,222 @@ class MainWindow(QMainWindow):
 
         threading.Thread(target=_job, daemon=True).start()
 
-    def sitout_all(self):
+    def sitout_toggle(self):
+        if self.current_project != AppConfig.PROJECT_GG:
+            return
+        if not (CV2_AVAILABLE and PYAUTOGUI_AVAILABLE):
+            self.log("CV2/PyAutoGUI недоступны — шаблоны SitOut/SitIn не найдены.", "error")
+            return
+
+        enter_pts, exit_pts = self._scan_sitout_state()
+
+        # Есть незажатые столы → дожать ситаут только там
+        if enter_pts:
+            self.log(f"Обнаружено столов без ситаута: {len(enter_pts)} — дожимаю.", "info")
+            self.sitout_all()
+            self._refresh_sitout_ui_state()
+            return
+
+        # Все в ситауте → вернуть в игру
+        if exit_pts:
+            self.log(f"Все столы в ситауте: {len(exit_pts)} — возвращаю.", "info")
+            self._set_sitout_button_visual('mix')
+            gg_cfg = PROJECT_CONFIGS.get(AppConfig.PROJECT_GG, {})
+            gg_tables = self.window_manager.find_windows_by_config(gg_cfg, AppConfig.KEY_TABLE, int(self.winId()))
+
+            def _hwnd_for_point(x, y):
+                try:
+                    pt = win32gui.WindowFromPoint((x, y))
+                    return win32gui.GetAncestor(pt, win32con.GA_ROOT)
+                except Exception:
+                    return None
+
+
+            self._set_sitout_button_visual('mix')
+            for (x, y) in exit_pts:
+                hwnd_at_point = _hwnd_for_point(x, y)
+                self.window_manager.robust_click(x, y, hwnd=hwnd_at_point, log_prefix="[sitout_toggle:return]")
+                time.sleep(AppConfig.SITOUT_CLICK_DELAY_MS / 1000.0)
+            time.sleep(0.4)
+            self._refresh_sitout_ui_state()
+            return
+
+        # Ничего не найдено
+        self.log("Кнопок SitOut/SitIn на экране не видно.", "warning")
+        self._set_sitout_button_visual('na')
+
+
+    def sitout_all(self, max_passes: int = 6):
+        """
+        Активирует "ситаут" на всех доступных столах.
+
+        Эта функция сканирует экран на наличие кнопок для перехода в ситаут,
+        предотвращает повторный запуск (re-entry), имеет защиту от слишком
+        частых вызовов (cooldown) и использует отказоустойчивый цикл, чтобы
+        избежать зацикливания, если состояние перестает меняться.
+        """
         now = time.monotonic()
-        if now - getattr(self, "_sitout_last_ts", 0.0) < getattr(AppConfig, "SITOUT_COOLDOWN_S", 10):
+        # Проверка Cooldown: не запускать слишком часто
+        if now - getattr(self, "_sitout_last_ts", 0.0) < getattr(AppConfig, "SITOUT_COOLDOWN_S", 2):
             self.log("Ситаут уже выполнялся недавно — антиспам.", "warning")
             return
         self._sitout_last_ts = now
 
-        """Ищет на экране все кнопки 'sitout' по темплейтам и кликает по каждой."""
-        if self.current_project != AppConfig.PROJECT_GG:
+        # Защита от повторного входа (anti-re-entry) и временное отключение кнопки
+        if getattr(self, "_sitout_running", False):
             return
-        if not (CV2_AVAILABLE and PYAUTOGUI_AVAILABLE):
-            self.log("CV2/PyAutoGUI недоступны — поиск 'Ситаут' невозможен.", "error")
-            return
+        self._sitout_running = True
+        btn_ref = getattr(self, "sitout_all_button", None)
+        if btn_ref:
+            btn_ref.setEnabled(False)
 
+        try:
+            # Проверки на доступность функции
+            if self.current_project != AppConfig.PROJECT_GG:
+                return
+            if not (CV2_AVAILABLE and PYAUTOGUI_AVAILABLE):
+                self.log("CV2/PyAutoGUI недоступны — поиск 'Ситаут' невозможен.", "error")
+                return
+
+            total_clicked = 0
+            self._set_sitout_button_visual('mix')
+
+            # --- Обновленный цикл ---
+            attempt = 0
+            prev_left = None
+            while attempt < max_passes:
+                enter_pts, _ = self._scan_sitout_state()
+                if not enter_pts:
+                    break  # Все кнопки нажаты
+
+                # Кликаем по уникальным центрам найденных кнопок
+                # Получаем актуальный список окон столов GG один раз
+                gg_cfg = PROJECT_CONFIGS.get(AppConfig.PROJECT_GG, {})
+                gg_tables = self.window_manager.find_windows_by_config(gg_cfg, AppConfig.KEY_TABLE, int(self.winId()))
+
+                def _hwnd_for_point(x, y):
+                    try:
+                        pt = win32gui.WindowFromPoint((x, y))
+                        return win32gui.GetAncestor(pt, win32con.GA_ROOT)
+                    except Exception:
+                        return None
+
+
+                for (cx, cy) in enter_pts:
+                    hwnd_at_point = _hwnd_for_point(cx, cy)
+                    # небольшой джиттер, чтобы не попадать в пиксель-«дырку»
+                    jx, jy = cx + random.randint(-2, 2), cy + random.randint(-2, 2)
+                    ok = self.window_manager.robust_click(jx, jy, hwnd=hwnd_at_point, log_prefix="[sitout_all]")
+                    if ok:
+                        total_clicked += 1
+                    else:
+                        self.log(f"[sitout_all] Не удалось кликнуть по точке ({cx},{cy}).", "warning")
+                    time.sleep((AppConfig.SITOUT_CLICK_DELAY_MS + random.randint(-80, 80)) / 1000.0)
+                # после серии кликов уже есть
+
+
+                # Проверка на зацикливание: если количество оставшихся кнопок не уменьшается
+                left_now, _ = self._scan_sitout_state()
+                if prev_left is not None and len(left_now) >= len(prev_left):
+                    self.log(f"Количество кнопок ситаута перестало уменьшаться ({len(left_now)}), выход.", "warning")
+                    break
+                prev_left = left_now
+                attempt += 1
+            # --- Конец обновленного цикла ---
+
+            # Финальная проверка и обновление UI
+            final_left, _ = self._scan_sitout_state()
+            if not final_left:
+                self.log(f"Ситаут везде: OK (нажато {total_clicked}).", "info")
+                self._set_sitout_button_visual('on')
+            else:
+                self.log(f"Не все кнопки прожались, осталось: {len(final_left)}.", "warning")
+                self._set_sitout_button_visual('mix')
+
+        finally:
+            # Гарантированно возвращаем кнопку в активное состояние и снимаем флаг выполнения
+            if btn_ref:
+                btn_ref.setEnabled(True)
+            self._sitout_running = False
+
+    def _collect_centers_by_keywords(self, screen_gray, keywords):
         templates_dir = self._get_templates_dir(self.current_project)
         if not templates_dir:
-            return
-
-        # собираем темплейты: templates/GG/sitout/*.png и fallback sitout*.png
+            return []
         files = []
         sitout_dir = os.path.join(templates_dir, AppConfig.SITOUT_DIR_NAME)
         try:
             if os.path.isdir(sitout_dir):
                 files += [os.path.join(sitout_dir, f) for f in os.listdir(sitout_dir) if f.lower().endswith(".png")]
-            files += [os.path.join(templates_dir, f) for f in os.listdir(templates_dir)
-                    if f.lower().endswith(".png") and f.lower().startswith("sitout")]
+            # fallback: *.png в корне каталога проекта
+            files += [os.path.join(templates_dir, f) for f in os.listdir(templates_dir) if f.lower().endswith(".png")]
         except Exception:
             pass
-        files = list(dict.fromkeys(files))
-        if not files:
-            self.log("Шаблоны 'sitout' не найдены.", "warning")
-            return
 
-        # единый скриншот
-        screenshot = pyautogui.screenshot()
-        screen_gray = cv2.cvtColor(np.array(screenshot), cv2.COLOR_RGB2GRAY)
+        files = [p for p in dict.fromkeys(files)  # уникально
+                if any(kw in os.path.basename(p).lower() for kw in keywords)]
+        if not files:
+            return []
 
         centers = []
         for path in files:
-            tpl = cv2.imread(path, cv2.IMREAD_GRAYSCALE)
-            if tpl is None:
-                continue
-            res = cv2.matchTemplate(screen_gray, tpl, cv2.TM_CCOEFF_NORMED)
-            ys, xs = np.where(res >= AppConfig.SITOUT_CONFIDENCE)
-            h, w = tpl.shape[:2]
-            centers += [(int(x + w/2), int(y + h/2)) for x, y in zip(xs, ys)]
-
-        # простая дедупликация по расстоянию (без NMS)
+            centers += self.window_manager.find_template_multi(
+                screen_gray, path, confidence=AppConfig.SITOUT_CONFIDENCE, dedup_px=18
+            )
+        # финальный дедуп
         dedup = []
         for cx, cy in centers:
             if all(abs(cx - x) > 18 or abs(cy - y) > 18 for x, y in dedup):
                 dedup.append((cx, cy))
+        return dedup
 
-        if not dedup:
-            self.log("Кнопки 'Ситаут' на экране не найдены.", "info")
+
+    def _scan_sitout_state(self):
+        """Возвращает (enter_pts, exit_pts): куда жать для входа/выхода."""
+        if self.current_project != AppConfig.PROJECT_GG or not (CV2_AVAILABLE and PYAUTOGUI_AVAILABLE):
+            return [], []
+        screenshot = pyautogui.screenshot()
+        screen_gray = cv2.cvtColor(np.array(screenshot), cv2.COLOR_RGB2GRAY)
+        enter_pts = self._collect_centers_by_keywords(screen_gray, AppConfig.SITOUT_ENTER_KEYWORDS)
+        exit_pts  = self._collect_centers_by_keywords(screen_gray, AppConfig.SITOUT_EXIT_KEYWORDS)
+        return enter_pts, exit_pts
+
+
+    def _set_sitout_button_visual(self, mode: str):
+        """
+        mode: 'on'  -> все в ситауте (зелёный, текст: Вернуться (везде))
+            'off' -> нет ситаута (синий/primary, текст: Ситаут (везде))
+            'mix' -> частично/в процессе (янтарный)
+            'na'  -> кнопки не видны/нет столов (серый)
+        """
+        if not hasattr(self, "sitout_all_button") or self.sitout_all_button is None:
             return
+        btn = self.sitout_all_button
+        base = f"QPushButton {{ font-family: {StyleSheet.FONT_FAMILY_SEMIBOLD}; font-size: 11px; border-radius: 6px; padding: 6px 10px; color: {ColorPalette.WHITE}; border: none; }}"
+        if mode == 'on':
+            btn.setText(AppConfig.MSG_SITOUT_ALL)  # всегда один и тот же текст
+            btn.setStyleSheet(base + f"background-color: {ColorPalette.GREEN}; color: {ColorPalette.WHITE};")
+        elif mode == 'off':
+            btn.setText(AppConfig.MSG_SITOUT_ALL)
+            btn.setStyleSheet(base + StyleSheet.get_button_style(primary=False).split("}",1)[1])  # оставляем текущий внешний вид secondary
+        elif mode == 'mix':
+            btn.setText(AppConfig.MSG_SITOUT_ALL)
+            btn.setStyleSheet(base + f"background-color: {ColorPalette.AMBER}; color: {ColorPalette.WHITE};")
+        elif mode == 'na':
+            btn.setText(AppConfig.MSG_SITOUT_ALL)
+            btn.setStyleSheet(base + f"background-color: {ColorPalette.SECONDARY}; color: {ColorPalette.TEXT_SECONDARY};")
 
-        self.log(f"Нашёл {len(dedup)} кнопок 'Ситаут'. Нажимаю по всем...", "info")
-        for (cx, cy) in dedup:
-            if self.window_manager.robust_click(cx, cy, log_prefix="[Sitout]"):
-                self.window_manager.click_visual_request.emit(cx, cy)
-                delay = AppConfig.SITOUT_CLICK_DELAY_MS + random.randint(-60, 60)
-                time.sleep(max(200, delay) / 1000.0)
+
+    def _refresh_sitout_ui_state(self):
+        enter_pts, exit_pts = self._scan_sitout_state()
+        if enter_pts and exit_pts:
+            self._set_sitout_button_visual('mix')
+        elif enter_pts and not exit_pts:
+            self._set_sitout_button_visual('off')
+        elif not enter_pts and exit_pts:
+            self._set_sitout_button_visual('on')
+        else:
+            self._set_sitout_button_visual('na')
 
 
     def _scan_and_click_any_emoji(self) -> bool:
@@ -2621,8 +3059,8 @@ class MainWindow(QMainWindow):
 
             # 2) ждём grace
             if AppConfig.PROCESS_CLOSE_GRACE_MS > 0:
-                QThread.msleep(AppConfig.PROCESS_CLOSE_GRACE_MS)  # в GUI-потоке лучше не спать долго; ok, т.к. диалог модальный
-                # Если хочешь не блокировать UI — переделаем на QTimer.singleShot цепочкой.
+                QTimer.singleShot(AppConfig.PROCESS_CLOSE_GRACE_MS, lambda: self._terminate_or_kill(victims, stats))
+                return stats
 
             # 3) terminate/kill оставшихся
             for p in victims:
@@ -2709,6 +3147,7 @@ class MainWindow(QMainWindow):
         self.timers["auto_arrange"].stop()
         self.timers["popup_check"].stop()
         self.timers["emoji"].stop()
+        self.timers["wu_watchdog"].stop()
         self.update_window_title()
 
         if new_project_name:
@@ -2738,6 +3177,44 @@ class MainWindow(QMainWindow):
                 if self.is_auto_emoji_enabled:
                     self._schedule_next_emoji(reason="project_changed")
                     self.timers["emoji"].start(AppConfig.EMOJI_CHECK_INTERVAL_MS)
+
+            elif new_project_name == AppConfig.PROJECT_WU:
+                # Разрешаем разовую раскладку LDMulti при первичном определении проекта
+                self._wu_allow_ldm_position = True
+                QTimer.singleShot(0, self._ensure_wu_environment)
+                QTimer.singleShot(150, lambda: setattr(self, "_wu_allow_ldm_position", False))
+                # Поставим окно run_wukong на место
+                QTimer.singleShot(250, self.position_run_wukong_window)
+                # Ватчдог — только проверка сервисов
+                try:
+                    self.timers["wu_watchdog"].stop()
+                    self.timers["wu_watchdog"].timeout.disconnect()
+                except Exception:
+                    pass
+                self.timers["wu_watchdog"].timeout.connect(lambda: self._ensure_wu_environment())
+                self.timers["wu_watchdog"].start(2000)
+
+                # СТАРТ СКАНЕРА ПОПАПОВ ДЛЯ WU
+                self.timers["popup_check"].start(AppConfig.POPUP_CHECK_INTERVAL_FAST)
+
+                # WU: дефолты — автоэмодзи ВЫКЛ, автоспам ВКЛ
+                self.is_auto_emoji_enabled = False
+                self.is_auto_popup_closing_enabled = True
+                self.timers["emoji"].stop()
+                self._next_emoji_due_ts = 0.0
+                self._emoji_period_s = 0.0
+                self.update_emoji_progress()
+                self.update_project_ui_state()
+                self.log(f"{AppConfig.EMOJI_LOG_PREFIX} Автоэмодзи: ВЫКЛ. (WU по умолчанию)", "info")
+                self.log(AppConfig.MSG_POPUP_CLOSER_ON, "info")
+
+                hwnd = find_camtasia_window()
+                if hwnd:
+                    move_camtasia_to(hwnd, 1100, 700)  # было 1400 805
+                self.position_gg_panel()
+                self.timers["popup_check"].start(2000)
+
+
 
             # ВАЖНО: запускаем авто-расстановку, если автоматика включена
             if self.is_automation_enabled:
@@ -2972,7 +3449,12 @@ class MainWindow(QMainWindow):
         if not self.current_project: return
         try:
             self._clear_layout()
-            if self.current_project == AppConfig.PROJECT_GG:
+            if self.current_project in (AppConfig.PROJECT_GG, AppConfig.PROJECT_WU):
+                if self.current_project == AppConfig.PROJECT_WU:
+                    if hasattr(self, "close_tables_button"):
+                        self.close_tables_button.setVisible(False)
+                    if hasattr(self, "sitout_all_button"):
+                        self.sitout_all_button.setVisible(False)
                 self.setFixedSize(AppConfig.GG_UI_WIDTH, AppConfig.GG_UI_HEIGHT)
                 main_layout = QHBoxLayout(self.central_widget)
                 main_layout.setContentsMargins(12, 10, 12, 10)
@@ -2996,7 +3478,7 @@ class MainWindow(QMainWindow):
             automation_label.setStyleSheet(StyleSheet.PROGRESS_BAR_LABEL)
             auto_record_label = QLabel("Автозапись")
             auto_record_label.setStyleSheet(StyleSheet.PROGRESS_BAR_LABEL)
-            auto_popup_label = QLabel("Автозакрытие спама (beta)")
+            auto_popup_label = QLabel("Автозакрытие спама")
             auto_popup_label.setStyleSheet(StyleSheet.PROGRESS_BAR_LABEL)
             self.auto_emoji_toggle = ToggleSwitch()
             auto_emoji_label = QLabel("Автоэмодзи")
@@ -3273,6 +3755,7 @@ class MainWindow(QMainWindow):
             "session": QTimer(self), "player_start": QTimer(self),
             "record_cooldown": QTimer(self), "popup_check": QTimer(self),
             "uptime_check": QTimer(self),
+            "wu_watchdog": QTimer(self),
         }
         self.timers["player_check"].timeout.connect(self.check_for_player)
         self.timers["recorder_check"].timeout.connect(self.check_for_recorder)
@@ -3287,6 +3770,8 @@ class MainWindow(QMainWindow):
         self.timers["emoji"] = QTimer(self)
         self.timers["emoji"].timeout.connect(self.check_auto_emoji)
         self.timers["emoji"].timeout.connect(self.update_emoji_progress)
+        self.timers["wu_watchdog"].timeout.connect(self._ensure_wu_environment)
+
 
 
 
@@ -3640,35 +4125,58 @@ class MainWindow(QMainWindow):
                 self._update_gg_record_state()
             elif self.current_project == AppConfig.PROJECT_QQ:
                 self._update_qq_record_state()
+            elif self.current_project == AppConfig.PROJECT_WU:
+                self._update_wu_record_state()
             else: # Другие проекты со старой логикой
                 self._update_generic_record_state()
         except Exception as e:
             self.log(f"Ошибка в логике автозаписи: {e}", "error")
             logging.error("Ошибка в check_auto_record_logic", exc_info=True)
 
-    def _get_process_visibility(self, config, config_key, process_name_filter=None):
-        """Проверяет, есть ли видимые окна для данного конфига и процесса."""
-        for hwnd in self.window_manager.find_windows_by_config(config, config_key, self.winId()):
+    def _get_process_visibility(self, process_name_to_find: str) -> bool:
+        """Возвращает True, если есть видимое (не свернутое) окно процесса."""
+        target = (process_name_to_find or "").lower()
+        if not target:
+            return False
+
+        found_visible = False
+
+        def _enum_cb(hwnd, _):
+            nonlocal found_visible
             try:
-                if win32gui.IsWindowVisible(hwnd) and not win32gui.IsIconic(hwnd):
-                    if not process_name_filter:
-                        return True # Фильтр не нужен, одного окна достаточно
-                    
-                    _, pid = win32process.GetWindowThreadProcessId(hwnd)
-                    h_process = win32api.OpenProcess(win32con.PROCESS_QUERY_INFORMATION | win32con.PROCESS_VM_READ, False, pid)
-                    process_name = os.path.basename(win32process.GetModuleFileNameEx(h_process, 0))
-                    win32api.CloseHandle(h_process)
-                    
-                    if process_name.lower() == process_name_filter.lower():
-                        return True
+                if not win32gui.IsWindow(hwnd) or not win32gui.IsWindowVisible(hwnd) or win32gui.IsIconic(hwnd):
+                    return
+                _, pid = win32process.GetWindowThreadProcessId(hwnd)
+                h = None
+                exe = ""
+                try:
+                    h = win32api.OpenProcess(win32con.PROCESS_QUERY_INFORMATION | win32con.PROCESS_VM_READ, False, pid)
+                    exe = os.path.basename(win32process.GetModuleFileNameEx(h, 0)).lower()
+                except Exception:
+                    exe = ""
+                finally:
+                    if h:
+                        win32api.CloseHandle(h)
+                if target in exe:
+                    found_visible = True
             except Exception:
-                continue
-        return False
+                pass
+
+        try:
+            win32gui.EnumWindows(_enum_cb, None)
+        except Exception:
+            pass
+        return found_visible
+
+
 
     def _update_gg_record_state(self):
         """Логика автозаписи для проекта GG."""
         config = PROJECT_CONFIGS[AppConfig.PROJECT_GG]
-        is_clubgg_visible = self._get_process_visibility(config, AppConfig.KEY_TABLE, AppConfig.CLUBGG_PROCESS_NAME)
+        is_clubgg_visible = (
+            self.window_manager.find_first_window_by_process_name(AppConfig.CLUBGG_PROCESS_NAME, check_visible=True)
+            is not None
+        )
         is_chrome_visible = self.window_manager.find_first_window_by_process_name(AppConfig.CHROME_PROCESS_NAME, check_visible=True) is not None
         
         should_be_recording = is_clubgg_visible or is_chrome_visible
@@ -3697,10 +4205,56 @@ class MainWindow(QMainWindow):
                 self.stop_recording_session()
                 self.last_activity_time = 0 # Сбрасываем таймер
 
+    def _update_wu_record_state(self):
+        try:
+            # Состояние Camtasia
+            hwnd = find_camtasia_window()
+            is_recording = is_paused = False
+            if hwnd:
+                try:
+                    title = (win32gui.GetWindowText(hwnd) or "").lower()
+                    is_recording = AppConfig.CAMTASIA_WINDOW_TITLE_RECORDING in title
+                    is_paused    = AppConfig.CAMTASIA_WINDOW_TITLE_PAUSED in title
+                except Exception:
+                    pass
+
+            config = PROJECT_CONFIGS.get(AppConfig.PROJECT_WU)
+            tables = self.window_manager.find_windows_by_config(config, AppConfig.KEY_TABLE, int(self.winId()))
+            any_table_open = len(tables) > 0
+
+
+            should_be_recording = bool(any_table_open)
+
+            # сброс таймера активности как в GG
+            if should_be_recording:
+                self.last_activity_time = time.monotonic()
+
+            # Старт/резюм
+            if should_be_recording and not (is_recording or is_paused):
+                self.log("TPuke активен. Запускаю запись.", "info")
+                self.start_recording_session()
+                return
+
+            if should_be_recording and is_paused:
+                self.log("TPuke активен, запись на паузе. Возобновляю (F9).", "warning")
+                self.perform_camtasia_action(AppConfig.ACTION_RESUME)
+                return
+
+            # Стоп по отсутствию активности/открыт Chrome
+            inactivity_s = AppConfig.AUTO_STOP_RECORD_INACTIVITY_S
+            if (is_recording or is_paused) and (time.monotonic() - getattr(self, "last_activity_time", 0) > inactivity_s):
+                self.log("Нет активности в TPuke - останавливаю запись.", "info")
+                self.stop_recording_session()
+                self.last_activity_time = 0
+        except Exception:
+            logging.error("Ошибка в _update_wu_record_state", exc_info=True)
+
+
+
     def _update_qq_record_state(self):
         """Логика автозаписи для проекта QQ."""
         config = PROJECT_CONFIGS[AppConfig.PROJECT_QQ]
-        is_qq_visible = self._get_process_visibility(config, AppConfig.KEY_TABLE)
+        is_qq_visible = bool(self.window_manager.find_windows_by_config(config, AppConfig.KEY_TABLE, self.winId()))
         is_chrome_visible = self.window_manager.find_first_window_by_process_name(AppConfig.CHROME_PROCESS_NAME, check_visible=True) is not None
         
         should_be_recording = is_qq_visible or is_chrome_visible
@@ -3813,9 +4367,20 @@ class MainWindow(QMainWindow):
         current_count = len(found)
 
         if current_count != self.last_table_count:
-            self.log(f"Изменилось количество столов: {self.last_table_count} → {current_count}", "info")
             self.last_table_count = current_count
+            # прежнее поведение: расставить столы с небольшой задержкой
             QTimer.singleShot(AppConfig.TABLE_ARRANGE_ON_CHANGE_DELAY, self.arrange_tables)
+            QTimer.singleShot(AppConfig.TABLE_ARRANGE_ON_CHANGE_DELAY + 50, self._refresh_sitout_ui_state)
+
+            # НОВОЕ: если это GG и открыто >= 3 столов — поставить лобби на место
+            if self.current_project == AppConfig.PROJECT_GG and current_count >= 3:
+                try:
+                    config = PROJECT_CONFIGS.get(self.current_project)
+                    if config:
+                        # лёгкая задержка, чтобы столы успели встать
+                        QTimer.singleShot(150, lambda: self.position_lobby_window(config))
+                except Exception as e:
+                    self.log(f"Не удалось переместить лобби GG: {e}", "warning")
 
             # Перепланируем эмодзи только при изменении числа столов
             if self.is_auto_emoji_enabled:
@@ -3855,6 +4420,11 @@ class MainWindow(QMainWindow):
         if not found_windows:
             self.log(AppConfig.MSG_ARRANGE_TABLES_NOT_FOUND, "warning")
             return
+
+        if self.current_project == AppConfig.PROJECT_WU:
+            self.arrange_wu_tables_line(found_windows, config)
+            return
+
 
         titles = [win32gui.GetWindowText(hwnd) for hwnd in found_windows if win32gui.IsWindow(hwnd)]
         logging.info(f"Найдены окна для расстановки ({len(titles)}): {titles}")
@@ -3913,6 +4483,15 @@ class MainWindow(QMainWindow):
                 self.log(f"Не удалось разместить GG стол {i+1}: {e}", "error")
         if arranged_count > 0:
             self.log(f"GG столы расставлены по фиксированным слотам ({arranged_count}).", "info")
+        # НОВОЕ: если расставлено >= 3 столов — выставить лобби
+        try:
+            if len(found_windows) >= 3:
+                cfg = PROJECT_CONFIGS.get(AppConfig.PROJECT_GG)
+                if cfg:
+                    self.position_lobby_window(cfg)
+        except Exception as e:
+            self.log(f"Не удалось переместить лобби GG: {e}", "warning")
+
 
     def arrange_dynamic_qq_tables(self, found_windows, config):
         max_tables = len(found_windows)
@@ -3940,6 +4519,30 @@ class MainWindow(QMainWindow):
         if arranged_count > 0:
             self.log(f"Динамически расставлено столов: {arranged_count}", "info")
 
+    def arrange_wu_tables_line(self, found_windows, config):
+        """WU: до 6 столов — в один ряд слева направо без зазоров (нативный размер).
+        >6 столов — динамическое масштабирование по экрану (как в QQ)."""
+        if not found_windows:
+            return
+
+        n = len(found_windows)
+        if n > 6:
+            # Используем готовую динамическую раскладку по экрану
+            self.arrange_dynamic_qq_tables(found_windows, config)
+            return
+
+        # Плотно слева направо без промежутков, перекрытия допускаются
+        screen_geo = self.get_current_screen().availableGeometry()
+        left, top = screen_geo.left(), screen_geo.top()
+        base_w = int(config[AppConfig.KEY_TABLE][AppConfig.KEY_WIDTH])
+        base_h = int(config[AppConfig.KEY_TABLE][AppConfig.KEY_HEIGHT])
+
+        for i, hwnd in enumerate(found_windows):
+            x = left + i * base_w
+            self.position_window(hwnd, x, top, base_w, base_h, "Стол не найден.")
+
+        self.log(f"WU: столов расставлено плотной линией: {n}", "info")
+
     def arrange_other_windows(self):
         if not self.current_project:
             self.log(AppConfig.MSG_PROJECT_UNDEFINED, "error")
@@ -3949,6 +4552,12 @@ class MainWindow(QMainWindow):
             self.log(f"Нет конфига для {self.current_project}.", "warning")
             return
 
+        if self.current_project == AppConfig.PROJECT_WU:
+            # Разрешаем одноразово позиционировать LDMulti и ставим run_wukong
+            self._wu_allow_ldm_position = True
+            self._ensure_wu_environment()
+            self._wu_allow_ldm_position = False
+            self.position_run_wukong_window()
         self.position_player_window(config)
         if self.current_project == AppConfig.PROJECT_GG:
             QTimer.singleShot(AppConfig.INJECTOR_MINIMIZE_DELAY, self.injector_minimizer.start)
@@ -3985,6 +4594,36 @@ class MainWindow(QMainWindow):
             cv_windows = self.window_manager.find_windows_by_config(config, AppConfig.KEY_CV_SERVER, self.winId())
             self.position_window(cv_windows[0] if cv_windows else None, cfg[AppConfig.KEY_X], cfg[AppConfig.KEY_Y], cfg[AppConfig.KEY_WIDTH], cfg[AppConfig.KEY_HEIGHT], "CV Сервер не найден.")
 
+    def position_run_wukong_window(self):
+        """Ставит окно с заголовком, содержащим 'run_wukong', в заданный прямоугольник."""
+        try:
+            hwnd = self.window_manager.find_first_window_by_title("run_wukong", exact_match=False, check_visible=False)
+            if hwnd and win32gui.IsWindow(hwnd):
+                if win32gui.IsIconic(hwnd):
+                    win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
+                    time.sleep(AppConfig.ROBUST_CLICK_ACTIVATION_DELAY)
+                x, y, w, h = 1809, 437, 993, 945
+                win32gui.MoveWindow(hwnd, x, y, w, h, True)
+            else:
+                self.log("Окно run_wukong не найдено.", "warning")
+            try:
+                tpuke = self.window_manager.find_first_window_by_title("TPuke", exact_match=False, check_visible=True)
+                if not tpuke:
+                    tpuke = self.window_manager.find_first_window_by_title(AppConfig.LDMULTIPLAYER_WINDOW_TITLE, exact_match=False, check_visible=True)
+                if tpuke and win32gui.IsWindow(tpuke):
+                    win32gui.SetWindowPos(tpuke, win32con.HWND_TOPMOST, 0,0,0,0,
+                                        win32con.SWP_NOMOVE | win32con.SWP_NOSIZE | win32con.SWP_SHOWWINDOW)
+                    time.sleep(0.03)
+                    win32gui.SetWindowPos(tpuke, win32con.HWND_NOTOPMOST, 0,0,0,0,
+                                        win32con.SWP_NOMOVE | win32con.SWP_NOSIZE | win32con.SWP_SHOWWINDOW)
+                    _force_foreground(tpuke, total_timeout=0.6, log_prefix="[wu::raise_player]")
+            except Exception:
+                pass
+
+        except Exception as e:
+            self.log(f"Ошибка позиционирования run_wukong: {e}", "error")
+
+
     def position_recorder_window(self):
         recorder_hwnd = find_camtasia_window()
         if recorder_hwnd and win32gui.IsWindow(recorder_hwnd):
@@ -3996,15 +4635,18 @@ class MainWindow(QMainWindow):
                 left, top, right, bottom = win32gui.GetWindowRect(recorder_hwnd)
                 w, h = right - left, bottom - top
 
-                if self.current_project == AppConfig.PROJECT_QQ:
-                    # Требуемая фиксированная позиция для QQ
-                    win32gui.MoveWindow(recorder_hwnd, 1400, 805, w, h, True)
+                cfg = PROJECT_CONFIGS.get(self.current_project, {}).get(AppConfig.KEY_RECORDER, {})
+                if isinstance(cfg.get(AppConfig.KEY_X), int) and isinstance(cfg.get(AppConfig.KEY_Y), int):
+                    win32gui.MoveWindow(recorder_hwnd, cfg[AppConfig.KEY_X], cfg[AppConfig.KEY_Y], w, h, True)
+                elif self.current_project in (AppConfig.PROJECT_QQ, AppConfig.PROJECT_WU):
+                    win32gui.MoveWindow(recorder_hwnd, 1200, 700, w, h, True)  # fallback
                 else:
-                    # Старое поведение: по низу активного экрана
+                    # старое «по низу экрана»
                     screen_rect = self.get_current_screen().availableGeometry()
                     x = screen_rect.left() + (screen_rect.width() - w) // 2
                     y = screen_rect.bottom() - h
                     win32gui.MoveWindow(recorder_hwnd, x, y, w, h, True)
+
             except Exception as e:
                 self.log(f"Ошибка позиционирования Camtasia: {e}", "error")
 
@@ -4095,6 +4737,9 @@ class MainWindow(QMainWindow):
             self._handle_qq_popups()
         elif self.current_project == AppConfig.PROJECT_GG:
             self._handle_gg_popups()
+        elif self.current_project == AppConfig.PROJECT_WU:
+            self._handle_wu_popups()
+
 
     def _handle_qq_popups(self):
         popup_config = PROJECT_CONFIGS.get(AppConfig.PROJECT_QQ, {}).get(AppConfig.KEY_POPUPS)
@@ -4165,13 +4810,42 @@ class MainWindow(QMainWindow):
                 self.log("Не удалось найти кнопку 'Max'.", "warning")
             return
 
+    def _handle_wu_popups(self):
+        """
+        TPuke: ищем спам-попапы и кликаем по ним.
+        Шаблоны: templates\tpuke\spam1.png, templates\tpuke\spam2.png
+        Интервал опроса задаётся таймером popup_check.
+        """
+        try:
+            wm = self.window_manager
+            base_path = getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(__file__)))
+            names = ("spam1.png", "spam2.png")
+            now = time.monotonic()
+            last_map = getattr(self, "_wu_spam_click_ts", {})
+
+            for name in names:
+                poster_path = os.path.join(base_path, AppConfig.TEMPLATES_DIR, "tpuke", name)
+                if not os.path.exists(poster_path):
+                    continue
+                # анти-даблклик для КАЖДОГО шаблона
+                if now - last_map.get(name, 0.0) < 0.8:
+                    continue
+                if wm.find_and_click_template(poster_path, confidence=0.85):
+                    last_map[name] = now
+                    self._wu_spam_click_ts = last_map
+                    self.log(f"TPuke: закрыт spam-popup ({name}).", "info")
+                    break
+        except Exception as e:
+            self.log(f"Ошибка в _handle_wu_popups: {e}", "warning")
+
     def _get_templates_dir(self, project_name: str) -> Optional[str]:
         base_path = getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(__file__)))
         templates_dir = os.path.join(base_path, AppConfig.TEMPLATES_DIR, project_name)
+        t = getattr(self, "timers", {}).get("popup_check")
         if not os.path.isdir(templates_dir):
-            if self.timers["popup_check"].isActive():
+            if isinstance(t, QTimer) and t.isActive():
                 self.log(f"Папка шаблонов {templates_dir} не найдена. Отключаю проверку.", "warning")
-                self.timers["popup_check"].stop()
+                t.stop()
             return None
         return templates_dir
 
@@ -4250,25 +4924,29 @@ def global_exception_hook(exctype, value, traceback):
     
     logging.critical("!!! КРИТИЧЕСКАЯ НЕОБРАБОТАННАЯ ОШИБКА !!!", exc_info=(exctype, value, traceback))
     
-    # Формируем сообщение для пользователя
     tb_str = "".join(tb.format_exception(exctype, value, traceback))
+    log_path = os.path.join(os.getenv('APPDATA'), AppConfig.LOG_DIR_NAME, AppConfig.LOG_FILE_NAME)
     error_msg = (
-        "В приложении произошла критическая ошибка, и оно будет закрыто.\n\n"
+        f"Компьютер: {MACHINE_TAG}\n\n"
+        "В приложении произошла критическая ошибка.\n\n"
         "Пожалуйста, отправьте разработчику файл лога для анализа.\n\n"
-        f"Файл лога находится здесь:\n{os.path.join(os.getenv('APPDATA'), AppConfig.LOG_DIR_NAME, AppConfig.LOG_FILE_NAME)}\n\n"
+        f"Файл лога:\n{log_path}\n\n"
         f"Ошибка:\n{tb_str}"
     )
-    
-    # Показываем сообщение
+
     error_box = QMessageBox()
     error_box.setIcon(QMessageBox.Icon.Critical)
     error_box.setText("Критическая ошибка OiHelper")
     error_box.setInformativeText(error_msg)
     error_box.setWindowTitle("Критическая ошибка")
-    error_box.setStandardButtons(QMessageBox.StandardButton.Ok)
-    error_box.exec()
+    error_box.setStandardButtons(QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Close)
+    res = error_box.exec()
+    if res == QMessageBox.StandardButton.Close:
+        try:
+            QApplication.instance().quit()
+        finally:
+            sys.exit(1)
 
-    sys.__excepthook__(exctype, value, traceback)
 
 
 # ===================================================================
